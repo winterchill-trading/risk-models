@@ -39,14 +39,15 @@ let%expect_test "isotonic validation" =
 
 let%expect_test "sigmoid is symmetric and does not overflow" =
   List.iter [ -800.; -1.; 0.; 1.; 800. ] ~f:(fun z ->
-    printf "%g -> %.17g\n" z (Calibration.sigmoid z));
+    (* 12 digits: libm's exp may differ in the last bit between macOS and Linux. *)
+    printf "%g -> %.12f\n" z (Calibration.sigmoid z));
   [%expect
     {|
-    -800 -> 0
-    -1 -> 0.2689414213699951
-    0 -> 0.5
-    1 -> 0.7310585786300049
-    800 -> 1
+    -800 -> 0.000000000000
+    -1 -> 0.268941421370
+    0 -> 0.500000000000
+    1 -> 0.731058578630
+    800 -> 1.000000000000
     |}]
 ;;
 
