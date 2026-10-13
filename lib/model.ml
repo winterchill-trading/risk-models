@@ -20,6 +20,7 @@ end
 
 type t =
   { name : string
+  ; version : string
   ; schema : Schema.t
   ; body : Body.t
   ; calibration : Calibration.t
@@ -29,13 +30,22 @@ type t =
 [@@deriving sexp_of]
 
 let name t = t.name
+let version t = t.version
 let schema t = t.schema
 let body t = t.body
 let calibration t = t.calibration
 let thresholds t = t.thresholds
 let reference t = t.reference
 
-let create ?thresholds ?reference ~name ~schema body calibration =
+let create
+  ?thresholds
+  ?reference
+  ?(version = "unversioned")
+  ~name
+  ~schema
+  body
+  calibration
+  =
   let n = Schema.length schema in
   let body_n =
     match (body : Body.t) with
@@ -50,7 +60,7 @@ let create ?thresholds ?reference ~name ~schema body calibration =
     match reference with
     | Some (edges, counts) when Array.length edges <> Array.length counts + 1 ->
       Or_error.error_s [%message "reference histogram needs one more edge than counts"]
-    | _ -> Ok { name; schema; body; calibration; thresholds; reference })
+    | _ -> Ok { name; version; schema; body; calibration; thresholds; reference })
 ;;
 
 let schema_of_yojson json =
@@ -122,7 +132,14 @@ let of_yojson ?(expected = Encoding.schema) json =
       let%map block_precision = field "block_precision" float j in
       { Thresholds.review; block; alerts_per_day; block_precision })
   in
-  create ?thresholds ?reference ~name ~schema body calibration
+  (* The version names the exact parameters: the first 12 hex digits of the MD5 of the
+     model's canonical JSON, so a retrain changes it and a reformatted file does not. *)
+  let version =
+    Md5.digest_string (Yojson.Safe.to_string json)
+    |> Md5.to_hex
+    |> fun h -> String.prefix h 12
+  in
+  create ?thresholds ?reference ~version ~name ~schema body calibration
 ;;
 
 let load ?expected path =

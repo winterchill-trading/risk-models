@@ -32,6 +32,7 @@ type t [@@deriving sexp_of]
 val create
   :  ?thresholds:Thresholds.t
   -> ?reference:float array * int array
+  -> ?version:string
   -> name:string
   -> schema:Schema.t
   -> Body.t
@@ -43,6 +44,11 @@ val of_yojson : ?expected:Schema.t -> Yojson.Safe.t -> t Or_error.t
 
 val load : ?expected:Schema.t -> string -> t Or_error.t
 val name : t -> string
+
+(** First 12 hex digits of the MD5 of the model's JSON; ["unversioned"] for a model built
+    in code without one. *)
+val version : t -> string
+
 val schema : t -> Schema.t
 val body : t -> Body.t
 val calibration : t -> Calibration.t
