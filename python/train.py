@@ -1,8 +1,9 @@
 """Train the gradient-boosted model and the logistic baseline, then calibrate both.
 
-Splits are by time, as in production: the first 65% of the window trains, the next
-15% calibrates (isotonic regression on the model's probability), the last 20% is held
-out for evaluate.py. Training is deterministic (no early stopping, fixed seeds).
+Splits are by time, as in production (risk_models_train/splits.py): days 0-51 train,
+days 52-65 calibrate (isotonic regression on the model's probability), days 66-72 are a
+7-day label delay gap and are never used, days 73 onwards are held out for evaluate.py.
+Training is deterministic (no early stopping, fixed seeds).
 
 Usage: uv run python train.py [--data data/synthetic.npz] [--out data/trained.pkl]
 """
@@ -19,15 +20,15 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
 from risk_models_train import schema
+from risk_models_train.splits import holdout as split
 
-TRAIN_END, CALIB_END = 0.65, 0.80
 
-
-def split(t):
-    lo, hi = t.min(), t.max()
-    a = lo + TRAIN_END * (hi - lo)
-    b = lo + CALIB_END * (hi - lo)
-    return t < a, (t >= a) & (t < b), t >= b
+def make_gbdt():
+    # Small, shallow trees keep the exported model a few hundred KB and scoring a few
+    # microseconds; deeper trees did not improve average precision on the synthetic set.
+    return HistGradientBoostingClassifier(
+        max_iter=150, learning_rate=0.08, max_leaf_nodes=15, min_samples_leaf=40,
+        l2_regularization=1.0, early_stopping=False, random_state=0)
 
 
 def load(path):
@@ -48,11 +49,7 @@ def main():
     print(f"train {tr.sum()} rows ({y[tr].sum()} positive), calibrate {ca.sum()} rows")
 
     start = time.time()
-    # Small, shallow trees keep the exported model a few hundred KB and scoring a few
-    # microseconds; deeper trees did not improve PR-AUC on the synthetic set.
-    gbdt = HistGradientBoostingClassifier(
-        max_iter=150, learning_rate=0.08, max_leaf_nodes=15, min_samples_leaf=40,
-        l2_regularization=1.0, early_stopping=False, random_state=0)
+    gbdt = make_gbdt()
     gbdt.fit(X[tr], y[tr])
     print(f"gbdt: {gbdt.n_iter_} trees in {time.time() - start:.1f} s")
 
