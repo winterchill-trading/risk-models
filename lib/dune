@@ -1,0 +1,6 @@
+(library
+ (name risk_models)
+ (public_name risk-models)
+ (libraries core yojson stdlib_upstream_compatible)
+ (preprocess
+  (pps ppx_jane)))

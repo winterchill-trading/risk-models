@@ -15,7 +15,6 @@
 
 (package
  (name risk-models)
- (allow_empty)
  (synopsis "Fraud and transaction monitoring models: Python training, OCaml scoring")
  (depends
   (ocaml
