@@ -14,6 +14,7 @@ let forest =
     ~left:[| 1; -1; 3; -1; -1; -1 |]
     ~right:[| 2; -1; 4; -1; -1; -1 |]
     ~value:[| 0.1; -1.0; 1.2; 0.5; 2.0; 0.25 |]
+    ()
   |> Or_error.ok_exn
 ;;
 
@@ -68,6 +69,7 @@ let%expect_test "validation" =
       ~left
       ~right:[| 2; -1; -1 |]
       ~value:[| 0.; 1.; 2. |]
+      ()
     |> Or_error.map ~f:Forest.n_nodes
   in
   let show r = print_s [%sexp (r : int Or_error.t)] in
@@ -94,4 +96,40 @@ let%expect_test "scoring allocates nothing" =
   done;
   print_s [%message (Gc.minor_words () - before : int)];
   [%expect {| ("(Gc.minor_words ()) - before" 0) |}]
+;;
+
+let%expect_test "LightGBM missing modes" =
+  (* One split on x0 <= -0.5, default left; leaves -1 (left) and 1 (right). *)
+  let stump missing =
+    Forest.create
+      ~n_features:1
+      ~base_score:0.
+      ~roots:[| 0 |]
+      ~feature:[| 0; -1; -1 |]
+      ~threshold:[| -0.5; 0.; 0. |]
+      ~default_left:[| true; false; false |]
+      ~missing:[| missing; Nan_default; Nan_default |]
+      ~left:[| 1; -1; -1 |]
+      ~right:[| 2; -1; -1 |]
+      ~value:[| 0.; -1.; 1. |]
+      ()
+    |> Or_error.ok_exn
+  in
+  List.iter
+    Forest.Missing.[ Nan_default; Nan_as_zero; Zero_default ]
+    ~f:(fun mode ->
+      let f = stump mode in
+      printf
+        "%-12s %s\n"
+        (Sexp.to_string [%sexp (mode : Forest.Missing.t)])
+        (String.concat
+           ~sep:" "
+           (List.map [ Float.nan; 0.; -1.; 1. ] ~f:(fun v ->
+              sprintf "%g->%g" v (Forest.margin f [| v |])))));
+  [%expect
+    {|
+    Nan_default  nan->-1 0->1 -1->-1 1->1
+    Nan_as_zero  nan->1 0->1 -1->-1 1->1
+    Zero_default nan->-1 0->-1 -1->-1 1->1
+    |}]
 ;;

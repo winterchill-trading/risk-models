@@ -12,6 +12,18 @@
 
 open! Core
 
+module Missing : sig
+  (** How a split treats missing values. *)
+  type t =
+    | Nan_default
+    (** NaN goes to the [default_left] side (scikit-learn; LightGBM [missing_type NaN]) *)
+    | Nan_as_zero (** NaN is read as 0.0 and compared (LightGBM [missing_type None]) *)
+    | Zero_default
+    (** NaN is read as 0.0, and 0.0 (within 1e-35) goes to the [default_left] side
+        (LightGBM [missing_type Zero]) *)
+  [@@deriving sexp, compare, equal]
+end
+
 type t [@@deriving sexp_of]
 
 (** Validates every index (children after their parent, so walks terminate), feature index
@@ -23,9 +35,11 @@ val create
   -> feature:int array
   -> threshold:float array
   -> default_left:bool array
+  -> ?missing:Missing.t array (** default: all [Nan_default] *)
   -> left:int array
   -> right:int array
   -> value:float array
+  -> unit
   -> t Or_error.t
 
 (** The [gbdt] object of the exported model format, see [python/export.py]. *)

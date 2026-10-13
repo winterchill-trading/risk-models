@@ -1,6 +1,14 @@
 open! Core
 module Float_u = Stdlib_upstream_compatible.Float_u
 
+module Missing = struct
+  type t =
+    | Nan_default
+    | Nan_as_zero
+    | Zero_default
+  [@@deriving sexp, compare, equal]
+end
+
 type t =
   { n_features : int
   ; base_score : float
@@ -9,6 +17,7 @@ type t =
   ; feature : int array
   ; threshold : float array
   ; default_left : bool array
+  ; missing : Missing.t array
   ; left : int array
   ; right : int array
   ; value : float array
@@ -27,11 +36,14 @@ let create
   ~feature
   ~threshold
   ~default_left
+  ?missing
   ~left
   ~right
   ~value
+  ()
   =
   let n = Array.length feature in
+  let missing = Option.value missing ~default:(Array.create ~len:n Missing.Nan_default) in
   let error msg i = Or_error.error_s [%message msg ~node:(i : int)] in
   let rec check i =
     if i = n
@@ -49,6 +61,7 @@ let create
   let lengths =
     [ Array.length threshold
     ; Array.length default_left
+    ; Array.length missing
     ; Array.length left
     ; Array.length right
     ; Array.length value
@@ -75,6 +88,7 @@ let create
         ; feature
         ; threshold
         ; default_left
+        ; missing
         ; left
         ; right
         ; value
@@ -119,14 +133,25 @@ let of_yojson ~n_features json =
       (Array.concat
          (List.map2_exn parts offsets ~f:(fun (_, _, _, _, r, _) o -> shift o r)))
     ~value:(cat (fun (_, _, _, _, _, v) -> v))
+    ()
 ;;
 
 let[@zero_alloc] [@inline] child t (x : float array) i =
   let v = Array.unsafe_get x (Array.unsafe_get t.feature i) in
+  let threshold = Array.unsafe_get t.threshold i in
+  (* LightGBM's NumericalDecision, which also covers scikit-learn's rule. *)
   let go_left =
-    if Float.is_nan v
-    then Array.unsafe_get t.default_left i
-    else Float.( <= ) v (Array.unsafe_get t.threshold i)
+    match Array.unsafe_get t.missing i with
+    | Nan_default ->
+      if Float.is_nan v
+      then Array.unsafe_get t.default_left i
+      else Float.( <= ) v threshold
+    | Nan_as_zero -> Float.( <= ) (if Float.is_nan v then 0. else v) threshold
+    | Zero_default ->
+      let v = if Float.is_nan v then 0. else v in
+      if Float.( >= ) v (-1e-35) && Float.( <= ) v 1e-35
+      then Array.unsafe_get t.default_left i
+      else Float.( <= ) v threshold
   in
   if go_left then Array.unsafe_get t.left i else Array.unsafe_get t.right i
 ;;
