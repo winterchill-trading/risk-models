@@ -135,3 +135,23 @@ let%expect_test "two rules, shadow by default, and their policy specs" =
      (Score (model txn-fraud-gbdt) (thresholds ((block_at 0.68888888888888888)))))
     |}]
 ;;
+
+let%expect_test "risk-rules feature JSON (from `risk-rules features`) scores end to end" =
+  let m = force model in
+  In_channel.read_lines "fixtures/features-examples.jsonl"
+  |> List.filter ~f:(fun l -> not (String.is_empty l))
+  |> List.iter ~f:(fun line ->
+    let f = Features.of_json line |> Or_error.ok_exn in
+    let s = Scorer.explain m (Encoding.encode f) in
+    printf
+      "%s %s %.6f %s\n"
+      f.rail
+      (Option.value f.card_channel ~default:"-")
+      s.value
+      (String.concat ~sep:"," (List.map s.reasons ~f:fst)));
+  [%expect
+    {|
+    card Online 0.002030 counterparty_country_is_residence,card_online,mcc
+    sepa_instant - 0.023173 beneficiary_age_hours,payee_match,rail_sepa_instant
+    |}]
+;;

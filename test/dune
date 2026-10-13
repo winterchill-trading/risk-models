@@ -4,6 +4,7 @@
  (inline_tests
   (deps
    (glob_files fixtures/*.csv)
+   (glob_files fixtures/*.jsonl)
    (source_tree ../models)
    ../python/risk_models_train/features.json)
   (flags
