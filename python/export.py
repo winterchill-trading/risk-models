@@ -10,6 +10,9 @@ Format (format = 1):
   logistic    {intercept, weights, mean, scale}: margin = intercept + sum w*(x-mean)/scale
   calibration {kind: "isotonic", x, y} | {kind: "platt", a, b} | {kind: "identity"}
   reference   {edges, counts}: calibrated score histogram on the calibration window
+  thresholds  {review, block, alerts_per_day, block_precision}: calibrated-score cut-offs
+              for the model_review and model_block rules (block is null when no score
+              reached the precision target), chosen by evaluate.py
   metrics     a summary copied from metrics.json, informational
 
 Before writing, the reference scorer (risk_models_train/scorer.py) must agree with
@@ -33,7 +36,7 @@ from train import load, split
 # Log-spaced score buckets: almost all traffic scores below 1e-3, and drift that
 # matters shows up as mass moving between the low buckets.
 SCORE_EDGES = [0.0, 1e-5, 3e-5, 1e-4, 3e-4, 1e-3, 3e-3, 1e-2, 3e-2, 0.1, 0.3, 1.0]
-FIXTURE_ROWS, FIXTURE_POSITIVES, FIXTURE_MISSING = 1000, 150, 20
+FIXTURE_ROWS, FIXTURE_POSITIVES, FIXTURE_MISSING, FIXTURE_AT_SPLIT = 1000, 150, 20, 40
 
 
 def export_tree(pred):
@@ -80,6 +83,10 @@ def to_json(name, entry, metrics, ref_scores):
                             y=iso.y_thresholds_.tolist())
     counts = np.histogram(ref_scores, SCORE_EDGES)[0]
     m["reference"] = dict(edges=SCORE_EDGES, counts=counts.tolist())
+    r = metrics["rules"]
+    m["thresholds"] = dict(review=r["review"], block=r["block"],
+                           alerts_per_day=r["review_budget_per_day"],
+                           block_precision=r["block_precision"])
     m["metrics"] = {k: metrics[k] for k in ("pr_auc", "roc_auc", "brier")} | {
         "recall_at_fpr_0.1%": metrics["at_fpr_0.1%"]["recall"],
         "recall_at_fpr_1%": metrics["at_fpr_1%"]["recall"]}
@@ -105,17 +112,26 @@ def check_parity(model, entry, X):
     return worst
 
 
-def fixture_rows(d, te, missing, rng):
+def fixture_rows(d, te, model, rng):
     idx = np.flatnonzero(te)
     pos = idx[d["y"][idx] == 1]
     chosen = np.concatenate([
         rng.choice(pos, FIXTURE_POSITIVES, replace=False),
         rng.choice(idx[d["y"][idx] == 0], FIXTURE_ROWS - FIXTURE_POSITIVES, replace=False)])
     X = d["X"][np.sort(chosen)].copy()
-    if missing:
+    if model["kind"] == "gbdt":
+        rows = rng.choice(len(X), FIXTURE_MISSING + FIXTURE_AT_SPLIT, replace=False)
         # A few rows with a missing feature exercise the trees' missing-value branch.
-        for r in rng.choice(len(X), FIXTURE_MISSING, replace=False):
+        for r in rows[:FIXTURE_MISSING]:
             X[r, rng.integers(0, X.shape[1])] = np.nan
+        # Others carry a value exactly equal to a split threshold, where "<=" versus "<"
+        # would send the row the other way.
+        trees = model["gbdt"]["trees"]
+        for r in rows[FIXTURE_MISSING:]:
+            tree = trees[rng.integers(0, len(trees))]
+            splits = [i for i, f in enumerate(tree["feature"]) if f >= 0]
+            i = splits[rng.integers(0, len(splits))]
+            X[r, tree["feature"][i]] = tree["threshold"][i]
     return X
 
 
@@ -149,8 +165,7 @@ def main():
             metrics = json.load(f)
         _, prob = sklearn_margin_and_prob(entry, d["X"][ca])
         model = to_json(name, entry, metrics, entry["iso"].predict(prob))
-        is_gbdt = model["kind"] == "gbdt"
-        X = fixture_rows(d, te, missing=is_gbdt, rng=rng)
+        X = fixture_rows(d, te, model, rng)
         worst = check_parity(model, entry, X)
         with open(os.path.join(out, "model.json"), "w") as f:
             json.dump(model, f, allow_nan=False, separators=(",", ":"))
