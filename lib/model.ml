@@ -11,7 +11,7 @@ end
 module Thresholds = struct
   type t =
     { review : float
-    ; block : float
+    ; block : float option
     ; alerts_per_day : int
     ; block_precision : float
     }
@@ -110,7 +110,14 @@ let of_yojson ?(expected = Schema.txn_features_v1) json =
   let%bind thresholds =
     optional "thresholds" (fun j ->
       let%bind review = field "review" float j in
-      let%bind block = field "block" float j in
+      let%bind block =
+        field
+          "block"
+          (function
+            | `Null -> Ok None
+            | j -> float j >>| Option.some)
+          j
+      in
       let%bind alerts_per_day = field "alerts_per_day" int j in
       let%map block_precision = field "block_precision" float j in
       { Thresholds.review; block; alerts_per_day; block_precision })

@@ -20,7 +20,7 @@ module Thresholds : sig
       precision reached the target. *)
   type t =
     { review : float
-    ; block : float
+    ; block : float option
     ; alerts_per_day : int (** the budget [review] was chosen for *)
     ; block_precision : float (** the precision target [block] was chosen for *)
     }
