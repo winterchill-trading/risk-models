@@ -7,7 +7,9 @@ Format (format = 1):
               feature = -1 marks a leaf; value is the leaf value at leaves and the
               count-weighted expected value of the subtree at split nodes (used for
               reason codes only; the score sums leaf values)
-  logistic    {intercept, weights, mean, scale}: margin = intercept + sum w*(x-mean)/scale
+  logistic    {intercept, weights, mean, scale, log1p}: x' = log1p(max(x, 0)) where log1p
+              is 1, then margin = intercept + sum w*(x'-mean)/scale over present
+              features; a missing (NaN) feature contributes nothing
   calibration {kind: "isotonic", x, y} | {kind: "platt", a, b} | {kind: "identity"}
   reference   {edges, counts}: calibrated score histogram on the calibration window
   thresholds  {review, block, alerts_per_day, block_precision}: calibrated-score cut-offs
@@ -31,6 +33,7 @@ import pickle
 import numpy as np
 
 from risk_models_train import schema, scorer
+from evaluate import linear_view
 from train import load, split
 
 # Log-spaced score buckets: almost all traffic scores below 1e-3, and drift that
@@ -55,6 +58,10 @@ def export_tree(pred):
             l, r = left[i], right[i]
             value[i] = (count[l] * value[l] + count[r] * value[r]) / (count[l] + count[r])
     threshold = np.where(leaf, 0.0, nodes["num_threshold"])
+    # A split that separates missing values from all present ones has threshold +inf
+    # (every present value goes left). JSON has no infinity; the largest finite double
+    # routes every finite input the same way.
+    threshold = np.where(threshold == np.inf, np.finfo(np.float64).max, threshold)
     assert np.isfinite(threshold).all(), "non-finite split threshold"
     assert not nodes["is_categorical"].any()
     return dict(
@@ -77,7 +84,8 @@ def to_json(name, entry, metrics, ref_scores):
         sc, lr = entry["scaler"], entry["logit"]
         m["kind"] = "logistic"
         m["logistic"] = dict(intercept=float(lr.intercept_[0]), weights=lr.coef_[0].tolist(),
-                             mean=sc.mean_.tolist(), scale=sc.scale_.tolist())
+                             mean=sc.mean_.tolist(), scale=sc.scale_.tolist(),
+                             log1p=[int(f in schema.LOG_FEATURES) for f in schema.FEATURES])
     iso = entry["iso"]
     m["calibration"] = dict(kind="isotonic", x=iso.X_thresholds_.tolist(),
                             y=iso.y_thresholds_.tolist())
@@ -97,7 +105,7 @@ def sklearn_margin_and_prob(entry, X):
     if "gbdt" in entry:
         g = entry["gbdt"]
         return g.decision_function(X), g.predict_proba(X)[:, 1]
-    Z = entry["scaler"].transform(X)
+    Z = linear_view(entry, X)
     return entry["logit"].decision_function(Z), entry["logit"].predict_proba(Z)[:, 1]
 
 
@@ -119,17 +127,18 @@ def fixture_rows(d, te, model, rng):
         rng.choice(pos, FIXTURE_POSITIVES, replace=False),
         rng.choice(idx[d["y"][idx] == 0], FIXTURE_ROWS - FIXTURE_POSITIVES, replace=False)])
     X = d["X"][np.sort(chosen)].copy()
+    rows = rng.choice(len(X), FIXTURE_MISSING + FIXTURE_AT_SPLIT, replace=False)
+    # Extra missing values on top of the data's own, so every model sees the branch.
+    for r in rows[:FIXTURE_MISSING]:
+        X[r, rng.integers(0, X.shape[1])] = np.nan
     if model["kind"] == "gbdt":
-        rows = rng.choice(len(X), FIXTURE_MISSING + FIXTURE_AT_SPLIT, replace=False)
-        # A few rows with a missing feature exercise the trees' missing-value branch.
-        for r in rows[:FIXTURE_MISSING]:
-            X[r, rng.integers(0, X.shape[1])] = np.nan
-        # Others carry a value exactly equal to a split threshold, where "<=" versus "<"
-        # would send the row the other way.
+        # Values exactly equal to a split threshold, where "<=" versus "<" would send
+        # the row the other way.
         trees = model["gbdt"]["trees"]
         for r in rows[FIXTURE_MISSING:]:
             tree = trees[rng.integers(0, len(trees))]
-            splits = [i for i, f in enumerate(tree["feature"]) if f >= 0]
+            splits = [i for i, f in enumerate(tree["feature"])
+                      if f >= 0 and tree["threshold"][i] < 1e300]
             i = splits[rng.integers(0, len(splits))]
             X[r, tree["feature"][i]] = tree["threshold"][i]
     return X

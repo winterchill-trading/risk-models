@@ -40,8 +40,14 @@ def margin_and_contributions(model, x):
         return margin, contrib, bias
     lin = model["logistic"]
     margin = lin["intercept"]
-    for i, (w, m, s) in enumerate(zip(lin["weights"], lin["mean"], lin["scale"])):
-        c = w * ((x[i] - m) / s)
+    for i, (w, m, s, lg) in enumerate(
+            zip(lin["weights"], lin["mean"], lin["scale"], lin["log1p"])):
+        v = x[i]
+        if math.isnan(v):
+            continue  # missing: imputed with the training mean, so the term is zero
+        if lg:
+            v = math.log1p(max(v, 0.0))
+        c = w * ((v - m) / s)
         contrib[i] = c
         margin += c
     return margin, contrib, lin["intercept"]
