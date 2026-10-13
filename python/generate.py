@@ -11,10 +11,10 @@ Injected typologies (label = index in schema.TYPOLOGIES):
                     two, often at night, high-risk merchant categories, foreign merchants
   account_takeover  credential change and a new device, then transfers draining the
                     balance to new beneficiaries or crypto within hours
-  mule              young account receives several inbound credits and forwards most of
+  money_mule        young account receives several inbound credits and forwards most of
                     them within a day to new beneficiaries or crypto
   structuring       repeated transfers just under the 10 000 EUR reporting threshold
-  app_scam          the genuine customer, on their own device, sends unusually large
+  app_fraud         the genuine customer, on their own device, sends unusually large
                     transfers to a brand new beneficiary (authorised push payment scam)
 
 Output: data/<name>.npz with X (features in schema order), y (0/1), typology, t
@@ -121,14 +121,52 @@ def pick_time(rng, day, hours):
 
 def legit(rng, c):
     trip = None
-    if rng.random() < 0.12:
+    if rng.random() < 0.15:
         start = int(rng.integers(0, c.days - 10))
         trip = (start, start + int(rng.integers(3, 11)))
+    # Phone upgrades and password resets: a credential change and a new device, the
+    # first half of an account takeover's footprint.
     upgrade, upgrade_device = None, 0
-    if rng.random() < 0.03:
+    if rng.random() < 0.10:
         upgrade = float(rng.uniform(0, c.days)) * DAY
         c.events.append(Event(upgrade, "cred_change", 0.0))
         upgrade_device = c.new_device(upgrade)
+    # Moving savings to an account at another bank: a large share of the balance to a
+    # new beneficiary, sometimes right after the upgrade.
+    if rng.random() < 0.04:
+        t = (upgrade + float(rng.uniform(1, 72)) * HOUR) if upgrade is not None and \
+            rng.random() < 0.3 else pick_time(rng, int(rng.integers(1, c.days)), TRANSFER_HOURS)
+        if t < c.days * DAY:
+            c.events.append(Event(t, "transfer", -float(rng.uniform(0.3, 0.9)),
+                                  benef=c.new_benef(t - float(rng.uniform(0, 48)) * HOUR),
+                                  crypto=c.crypto_user and rng.random() < 0.5,
+                                  device=upgrade_device if upgrade is not None and t > upgrade
+                                  else 0))
+    # Online shopping sprees (sales, gifts, concert tickets), at any hour for night owls.
+    for _ in range(rng.poisson(0.25)):
+        day = int(rng.integers(0, c.days))
+        t = pick_time(rng, day, NIGHT_HOURS if rng.random() < 0.25 else CARD_HOURS)
+        for _ in range(int(rng.integers(3, 9))):
+            t += float(rng.uniform(60, 1500))
+            c.events.append(Event(
+                t, "card", round(float(rng.lognormal(math.log(c.card_scale * 2), 0.8)), 2),
+                online=True, foreign=rng.random() < 0.3, mcc_risk=rng.random() < 0.3,
+                ip_mismatch=rng.random() < 0.03))
+    # Small-business owners paying invoices near the reporting line.
+    business = rng.random() < 0.012
+    # Selling a car or splitting a group trip: several inbound credits, then a payout.
+    if rng.random() < 0.02:
+        day = int(rng.integers(1, c.days - 2))
+        t = pick_time(rng, day, TRANSFER_HOURS)
+        total = 0.0
+        for _ in range(int(rng.integers(2, 6))):
+            amount = round(float(rng.uniform(200, 2500)), 2)
+            total += amount
+            c.events.append(Event(t, "inbound", amount))
+            t += float(rng.uniform(0.5, 20)) * HOUR
+        t += float(rng.uniform(1, 24)) * HOUR
+        c.events.append(Event(t, "transfer", round(total * float(rng.uniform(0.5, 1.0)), 2),
+                              benef=c.new_benef(t)))
     for day in range(c.days):
         dow = day % 7
         abroad = trip is not None and trip[0] <= day < trip[1]
@@ -141,98 +179,113 @@ def legit(rng, c):
         for _ in range(rng.poisson(c.card_rate * CARD_DOW[dow])):
             online = rng.random() < c.online_share
             amount = float(rng.lognormal(math.log(c.card_scale), 0.8))
-            if rng.random() < 0.004:
+            if rng.random() < 0.006:
                 amount *= float(rng.uniform(8, 30))  # a sofa, a laptop
             c.events.append(Event(
                 pick_time(rng, day, CARD_HOURS), "card", round(amount, 2), online=online,
                 foreign=abroad or (online and rng.random() < 0.15),
-                mcc_risk=rng.random() < (0.12 if online else 0.04),
-                ip_mismatch=abroad or rng.random() < 0.02, device=device))
+                mcc_risk=rng.random() < (0.15 if online else 0.04),
+                ip_mismatch=abroad or rng.random() < 0.03, device=device))
+        if business and dow < 5 and rng.random() < 0.15:
+            c.events.append(Event(day * DAY + 7 * HOUR, "inbound",
+                                  round(float(rng.uniform(9000, 30000)), 2)))
+            t = pick_time(rng, day, TRANSFER_HOURS)
+            benef = c.new_benef(t) if rng.random() < 0.3 else int(rng.integers(0, c.n_benef))
+            c.events.append(Event(t, "transfer", round(float(rng.uniform(4000, 9999)), 2),
+                                  benef=benef))
         for _ in range(rng.poisson(c.transfer_rate * TRANSFER_DOW[dow])):
             t = pick_time(rng, day, TRANSFER_HOURS)
             crypto = c.crypto_user and rng.random() < 0.3
-            if rng.random() < 0.06 or crypto and rng.random() < 0.2:
-                benef = c.new_benef(t)
+            if rng.random() < 0.08 or crypto and rng.random() < 0.2:
+                benef = c.new_benef(t - float(rng.uniform(0, 72)) * HOUR)
+                big = rng.random() < 0.15  # a deposit, a holiday rental, a used car
             else:
                 benef = int(rng.integers(0, c.n_benef))
+                big = rng.random() < 0.01
             amount = float(rng.lognormal(math.log(c.transfer_scale), 0.9))
-            if rng.random() < 0.003:
-                amount = float(rng.uniform(8000, 25000))  # a car, a deposit
-            c.events.append(Event(t, "transfer", round(amount, 2), benef=benef, crypto=crypto,
-                                  ip_mismatch=abroad, device=device))
+            if big:
+                amount *= float(rng.uniform(3, 25))
+            c.events.append(Event(t, "transfer", round(min(amount, 25000.0), 2), benef=benef,
+                                  crypto=crypto, ip_mismatch=abroad, device=device))
 
 
 def cnp_burst(rng, c):
     day = int(rng.integers(5, c.days))
-    t = pick_time(rng, day, NIGHT_HOURS if rng.random() < 0.6 else CARD_HOURS)
-    foreign = rng.random() < 0.6
-    for _ in range(int(rng.integers(3, 16))):
-        t += float(rng.uniform(60, 900))
+    t = pick_time(rng, day, NIGHT_HOURS if rng.random() < 0.5 else CARD_HOURS)
+    foreign = rng.random() < 0.5
+    for _ in range(int(rng.integers(2, 12))):
+        t += float(rng.uniform(60, 2400))
         c.events.append(Event(
-            t, "card", round(float(rng.lognormal(math.log(110), 0.7)), 2), online=True,
-            foreign=foreign or rng.random() < 0.3, mcc_risk=rng.random() < 0.65,
-            ip_mismatch=rng.random() < 0.5, label=1))
+            t, "card", round(float(rng.lognormal(math.log(90), 0.9)), 2), online=True,
+            foreign=foreign or rng.random() < 0.2, mcc_risk=rng.random() < 0.5,
+            ip_mismatch=rng.random() < 0.35, label=1))
 
 
 def account_takeover(rng, c):
     day = int(rng.integers(10, c.days))
-    t = pick_time(rng, day, NIGHT_HOURS if rng.random() < 0.4 else TRANSFER_HOURS)
-    c.events.append(Event(t, "cred_change", 0.0))
-    device = c.new_device(t)
-    ip = rng.random() < 0.7
+    t = pick_time(rng, day, NIGHT_HOURS if rng.random() < 0.3 else TRANSFER_HOURS)
+    # Remote-access takeovers run on the victim's own device and need no reset.
+    remote = rng.random() < 0.25
+    device = 0
+    if not remote:
+        c.events.append(Event(t, "cred_change", 0.0))
+        device = c.new_device(t)
+    ip = rng.random() < (0.2 if remote else 0.6)
     for _ in range(int(rng.integers(1, 4))):
-        t += float(rng.uniform(0.2, 8)) * HOUR
+        t += float(rng.uniform(0.2, 30)) * HOUR
         crypto = rng.random() < 0.4
         # Amount is set from the balance when features are computed (share of balance).
-        c.events.append(Event(t, "transfer", -float(rng.uniform(0.4, 0.95)),
+        c.events.append(Event(t, "transfer", -float(rng.uniform(0.25, 0.9)),
                               benef=c.new_benef(t), crypto=crypto, ip_mismatch=ip,
                               device=device, label=2))
 
 
 def mule(rng, c):
-    # Mule accounts are opened recently and recruited to pass money through.
-    c.account_age0 = float(rng.uniform(-20, 60))
+    # Mule accounts are mostly opened recently and recruited to pass money through.
+    c.account_age0 = float(rng.uniform(-20, 60)) if rng.random() < 0.7 \
+        else float(rng.uniform(60, 1500))
     for _ in range(int(rng.integers(1, 4))):
         day = int(rng.integers(max(0, int(-c.account_age0)) + 2, c.days - 2))
         t = pick_time(rng, day, TRANSFER_HOURS)
         total = 0.0
-        for _ in range(int(rng.integers(2, 7))):
-            amount = round(float(rng.uniform(400, 3000)), 2)
+        for _ in range(int(rng.integers(1, 6))):
+            amount = round(float(rng.uniform(300, 3000)), 2)
             total += amount
             c.events.append(Event(t, "inbound", amount))
-            t += float(rng.uniform(0.2, 5)) * HOUR
-        out = total * float(rng.uniform(0.8, 0.95))
+            t += float(rng.uniform(0.2, 12)) * HOUR
+        out = total * float(rng.uniform(0.7, 0.95))
         parts = int(rng.integers(1, 3))
-        benef = c.new_benef(t)
+        benef = c.new_benef(t) if rng.random() < 0.8 else int(rng.integers(0, c.n_benef))
         for _ in range(parts):
-            t += float(rng.uniform(0.5, 10)) * HOUR
+            t += float(rng.uniform(0.5, 30)) * HOUR
             c.events.append(Event(t, "transfer", round(out / parts, 2), benef=benef,
-                                  crypto=rng.random() < 0.35, label=3))
+                                  crypto=rng.random() < 0.3, label=3))
             if rng.random() < 0.5:
                 benef = c.new_benef(t)
 
 
 def structuring(rng, c):
-    day = int(rng.integers(3, c.days - 12))
+    day = int(rng.integers(3, c.days - 20))
     t = pick_time(rng, day, TRANSFER_HOURS)
-    n = int(rng.integers(3, 9))
-    c.events.append(Event(t, "inbound", round(n * float(rng.uniform(9000, 10000)), 2)))
+    n = int(rng.integers(2, 7))
+    c.events.append(Event(t, "inbound", round(n * float(rng.uniform(8000, 10000)), 2)))
     for _ in range(n):
-        t += float(rng.uniform(4, 48)) * HOUR
-        benef = c.new_benef(t) if rng.random() < 0.5 else int(rng.integers(0, c.n_benef))
-        c.events.append(Event(t, "transfer", round(float(rng.uniform(0.85, 0.995)) * THRESHOLD, 2),
+        t += float(rng.uniform(6, 120)) * HOUR
+        benef = c.new_benef(t) if rng.random() < 0.4 else int(rng.integers(0, c.n_benef))
+        c.events.append(Event(t, "transfer", round(float(rng.uniform(0.7, 0.995)) * THRESHOLD, 2),
                               benef=benef, label=4))
 
 
 def app_scam(rng, c):
     day = int(rng.integers(5, c.days))
     t = pick_time(rng, day, TRANSFER_HOURS)
-    benef = c.new_benef(t - float(rng.uniform(0, 3)) * HOUR)
+    # Scammers have the victim add the payee first, sometimes days ahead.
+    benef = c.new_benef(t - float(rng.uniform(0, 96)) * HOUR)
     for _ in range(int(rng.integers(1, 4))):
-        amount = c.transfer_scale * float(rng.uniform(3, 30))
+        amount = c.transfer_scale * float(rng.uniform(1.5, 20))
         c.events.append(Event(t, "transfer", round(min(amount, 20000.0), 2), benef=benef,
                               label=5))
-        t += float(rng.uniform(0.5, 30)) * HOUR
+        t += float(rng.uniform(0.5, 72)) * HOUR
 
 
 TYPOLOGY_FNS = [(cnp_burst, 0.03), (account_takeover, 0.03), (mule, 0.02),
