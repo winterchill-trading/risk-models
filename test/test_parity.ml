@@ -21,24 +21,24 @@ let read_fixture name =
 ;;
 
 let check name =
-  let model = Model.load (sprintf "../models/%s/model.json" name) |> Or_error.ok_exn in
+  let model = Scorer.load (sprintf "../models/%s/model.json" name) |> Or_error.ok_exn in
   let header, rows = read_fixture name in
-  assert (List.equal String.equal header (Array.to_list (Model.schema model).features));
+  assert (List.equal String.equal header (Array.to_list (Scorer.schema model).features));
   let worst = ref 0. in
   let reason_mismatch = ref 0 in
   let nan_rows = ref 0 in
   List.iter rows ~f:(fun (x, margin, probability, score, reasons) ->
     if Array.exists x ~f:Float.is_nan then incr nan_rows;
-    let s = Model.explain model x in
+    let s = Scorer.explain model x in
     List.iter
-      [ s.margin -. margin
-      ; Model.probability model x -. probability
-      ; s.score -. score
-      ; Model.score model x -. score
+      [ Scorer.margin model x -. margin
+      ; Scorer.probability model x -. probability
+      ; s.value -. score
+      ; Scorer.score model x -. score
       ]
       ~f:(fun d -> worst := Float.max !worst (Float.abs d));
     let got =
-      List.map s.reasons ~f:(fun r -> Schema.index_exn (Model.schema model) r.feature)
+      List.map s.reasons ~f:(fun (f, _) -> Schema.index_exn (Scorer.schema model) f)
     in
     if not (List.equal Int.equal got reasons) then incr reason_mismatch);
   print_s
@@ -52,10 +52,13 @@ let check name =
 
 let%expect_test "OCaml scores equal the Python reference within 1e-9" =
   check "txn-fraud-gbdt";
+  check "txn-fraud-lightgbm";
   check "txn-fraud-logistic";
   [%expect
     {|
     (txn-fraud-gbdt (rows 1000) (rows_with_nan 1000) (within_1e_9 true)
+     (reason_mismatches 0))
+    (txn-fraud-lightgbm (rows 1000) (rows_with_nan 1000) (within_1e_9 true)
      (reason_mismatches 0))
     (txn-fraud-logistic (rows 1000) (rows_with_nan 1000) (within_1e_9 true)
      (reason_mismatches 0))

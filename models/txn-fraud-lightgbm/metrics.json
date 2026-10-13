@@ -1,0 +1,183 @@
+{
+ "name": "txn-fraud-lightgbm",
+ "rows": {
+  "train": 418013,
+  "calibration": 112212,
+  "test": 146504
+ },
+ "positives_test": 504,
+ "pr_auc": 0.5435897891798399,
+ "roc_auc": 0.9797946224722766,
+ "brier": 0.0021080776606263734,
+ "ece": 5.816197421284105e-05,
+ "at_budget": [
+  {
+   "k": 25,
+   "precision": 0.62,
+   "recall": 0.5238095238095238
+  },
+  {
+   "k": 50,
+   "precision": 0.41600000000000004,
+   "recall": 0.6349206349206349
+  },
+  {
+   "k": 100,
+   "precision": 0.27999999999999997,
+   "recall": 0.7222222222222222
+  }
+ ],
+ "rules": {
+  "review_budget_per_day": 50,
+  "block_precision": 0.9,
+  "review": 0.09375,
+  "block": 0.631578947368421,
+  "calibration_window": {
+   "review": {
+    "threshold": 0.09375,
+    "alerts_per_day": 46.5,
+    "precision": 0.4807987711213518,
+    "recall": 0.6731182795698925
+   },
+   "block": {
+    "threshold": 0.631578947368421,
+    "alerts_per_day": 16.642857142857142,
+    "precision": 0.927038626609442,
+    "recall": 0.4645161290322581
+   }
+  },
+  "test_window": {
+   "review": {
+    "threshold": 0.09375,
+    "alerts_per_day": 36.05,
+    "precision": 0.42718446601941745,
+    "recall": 0.6111111111111112
+   },
+   "block": {
+    "threshold": 0.631578947368421,
+    "alerts_per_day": 10.55,
+    "precision": 0.8436018957345972,
+    "recall": 0.3531746031746032
+   }
+  }
+ },
+ "at_fpr_0.1%": {
+  "threshold": 0.2926829268292683,
+  "recall": 0.4861111111111111,
+  "cnp_burst": 0.15261044176706828,
+  "account_takeover": 0.963855421686747,
+  "money_mule": 0.8333333333333334,
+  "structuring": 0.8461538461538461,
+  "app_fraud": 0.6666666666666666
+ },
+ "at_fpr_1%": {
+  "threshold": 0.02857142857142857,
+  "recall": 0.7261904761904762,
+  "cnp_burst": 0.5020080321285141,
+  "account_takeover": 1.0,
+  "money_mule": 0.9333333333333333,
+  "structuring": 1.0,
+  "app_fraud": 0.898989898989899
+ },
+ "cost": {
+  "review_cost_eur": 4.0,
+  "aml_miss_cost_eur": 500.0,
+  "threshold": 0.013157894736842105,
+  "alerts": 4282,
+  "model_eur": 31695.54,
+  "no_model_eur": 464300.20999999996
+ },
+ "drift_psi": {
+  "score": 0.00042840879192883774,
+  "is_card": 0.0002749762047595282,
+  "amount": 0.00027699114896757745,
+  "amount_is_round": 3.311207760214617e-08,
+  "balance": 0.0,
+  "amount_to_balance": 0.0,
+  "beneficiary_age_hours": 0.0,
+  "beneficiary_trusted": 0.0,
+  "counterparty_country_is_residence": 0.0,
+  "self_hosted_unverified": 1.3230683790673146e-05,
+  "mcc": 0.0,
+  "out_count_1h": 7.189827651357914e-06,
+  "out_count_24h": 6.5494427504322574e-09,
+  "out_sum_24h": 2.2977842896263577e-05,
+  "out_sum_30d": 0.11261502222390593,
+  "out_distinct_beneficiaries_24h": 6.271898242798858e-06,
+  "in_count_24h": 0.00025603550226569876,
+  "in_sum_24h": 0.002231989529780023,
+  "pass_through_ratio_24h": 0.0,
+  "new_device": 3.1359728732621134e-06,
+  "ip_country_is_residence": 0.0,
+  "hours_since_credentials_change": 0.0,
+  "account_age_days": 0.029522534148156074,
+  "hour_of_day_utc": 3.279664437225012e-05,
+  "log1p_amount": 0.00027699114896757745,
+  "is_weekend": 0.01657927685787295,
+  "out_count_7d": 0.0034017831501037717,
+  "out_sum_1h": 0.0007629088397254946,
+  "out_sum_7d": 0.0044672289611617875,
+  "amount_over_mean_30d": 0.0,
+  "in_distinct_senders_24h": 0.00025603550226569876,
+  "minutes_since_last_inbound": 0.0,
+  "failed_sca_24h": 2.600222417441608e-05,
+  "card_auths_10m": 2.208005243326712e-05,
+  "card_declines_10m": 1.2281036289457858e-05,
+  "rail_sepa_instant": 5.4212453927427644e-05,
+  "rail_onchain": 2.7267572077391012e-06,
+  "rail_lightning": 3.637387117041587e-06,
+  "rail_intraledger": 5.847193169488723e-06,
+  "card_online": 2.0486199947152937e-05,
+  "card_atm": 1.0404493863098617e-05,
+  "payee_match": 0.0002915154908216255,
+  "payee_close_match": 5.409632893815759e-06,
+  "payee_no_match": 1.0771262365495737e-06,
+  "payee_not_possible": 5.464558205404099e-07
+ },
+ "importance": {
+  "is_card": 0.0,
+  "amount": 0.17554008285239656,
+  "amount_is_round": 9.030011463036034e-05,
+  "balance": 0.06131210855542964,
+  "amount_to_balance": 0.006665483547712046,
+  "beneficiary_age_hours": 0.3278831111288227,
+  "beneficiary_trusted": 0.0005340257556733,
+  "counterparty_country_is_residence": 0.05655341716256111,
+  "self_hosted_unverified": 0.00012330071912033055,
+  "mcc": 0.005194100958976593,
+  "out_count_1h": 0.0,
+  "out_count_24h": 9.173097788266765e-05,
+  "out_sum_24h": 0.003626464070774026,
+  "out_sum_30d": 0.011159950859379736,
+  "out_distinct_beneficiaries_24h": 0.0,
+  "in_count_24h": 0.0,
+  "in_sum_24h": 0.0822025868307229,
+  "pass_through_ratio_24h": 0.005181365846195049,
+  "new_device": 0.0,
+  "ip_country_is_residence": 0.012331312738890841,
+  "hours_since_credentials_change": 0.015608393477676799,
+  "account_age_days": 0.030235390430822195,
+  "hour_of_day_utc": 0.040701187319745875,
+  "log1p_amount": 0.0,
+  "is_weekend": 0.004984795614137149,
+  "out_count_7d": 0.0034090554151597237,
+  "out_sum_1h": 0.00015136645923375915,
+  "out_sum_7d": 0.015458990699247112,
+  "amount_over_mean_30d": 0.009850691403966006,
+  "in_distinct_senders_24h": 0.0003045949329813818,
+  "minutes_since_last_inbound": 0.04673122926261649,
+  "failed_sca_24h": 0.00024017819206160757,
+  "card_auths_10m": 0.013003817728694637,
+  "card_declines_10m": 0.010273580159646072,
+  "rail_sepa_instant": 0.006561407307486698,
+  "rail_onchain": 0.00026716824424455527,
+  "rail_lightning": 0.0,
+  "rail_intraledger": 0.00012946950107663638,
+  "card_online": 0.0359510820074797,
+  "card_atm": 0.0,
+  "payee_match": 0.0047881026736000835,
+  "payee_close_match": 0.003794299680802228,
+  "payee_no_match": 0.008905216730776428,
+  "payee_not_possible": 0.0001606406393770318
+ }
+}
