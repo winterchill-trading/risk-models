@@ -1,0 +1,11 @@
+(library
+ (name risk_models_test)
+ (libraries risk-models core yojson)
+ (inline_tests
+  (deps
+   (glob_files fixtures/*.csv)
+   (glob_files_rec ../models/**.json))
+  (flags
+   (:standard -source-tree-root .)))
+ (preprocess
+  (pps ppx_jane)))
