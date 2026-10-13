@@ -21,10 +21,10 @@ The model's output enters the decision as two rules next to the deterministic
 rules in risk-rules:
 
 - `model_review` (severity Review) when the calibrated score is at least
-  0.1447, the lowest score that kept the calibration window within
+  0.1154, the lowest score that kept the calibration window within
   50 alerts a day (the daily alert budget).
 - `model_block` (severity Block) when the score is at least the lowest value whose
-  precision on the calibration window was 90% or more: 0.8000.
+  precision on the calibration window was 90% or more: 0.6889.
 
 Both rules start in shadow mode (severity Allow): hits are journaled with the
 score, the model name and the top three reasons, but change no decision. Promote
@@ -34,10 +34,10 @@ point.
 
 | Rule | Threshold | Alerts a day | Precision | Recall |
 |------|-----------|--------------|-----------|--------|
-| review (calibration window) | 0.1447 | 49.4 | 0.457 | 0.718 |
-| review (test window) | 0.1447 | 43.0 | 0.437 | 0.714 |
-| block (calibration window) | 0.8000 | 12.4 | 0.948 | 0.375 |
-| block (test window) | 0.8000 | 9.9 | 0.861 | 0.324 |
+| review (calibration window) | 0.1154 | 46.4 | 0.478 | 0.669 |
+| review (test window) | 0.1154 | 36.8 | 0.420 | 0.613 |
+| block (calibration window) | 0.6889 | 16.6 | 0.909 | 0.454 |
+| block (test window) | 0.6889 | 10.8 | 0.815 | 0.349 |
 
 ## Data and validation
 
@@ -51,57 +51,57 @@ fraud.
 Splits are time-ordered, never random, with a 7-day label delay gap: days 0-51
 train, 52-65 calibrate, 66-72 are dropped (labels such as chargebacks and scam
 claims arrive late, so the last week before a decision point is unlabelled), 73
-onwards test. Rows: 427211 train, 116052
-calibration, 150359 test (553 positive in test).
+onwards test. Rows: 418013 train, 112212
+calibration, 146504 test (504 positive in test).
 
 ## Metrics (test window)
 
 | Metric | Value |
 |--------|-------|
-| Average precision (PR-AUC) | 0.6191 |
-| ROC-AUC | 0.9926 |
-| Recall at 0.1% FPR | 0.528 |
-| Recall at 1% FPR | 0.857 |
-| Brier score | 0.002037 |
-| Expected calibration error | 0.000051 |
+| Average precision (PR-AUC) | 0.5470 |
+| ROC-AUC | 0.9795 |
+| Recall at 0.1% FPR | 0.498 |
+| Recall at 1% FPR | 0.736 |
+| Brier score | 0.002087 |
+| Expected calibration error | 0.000080 |
 
 At a daily alert budget (the k highest scores each day):
 
 | Alerts a day | Precision | Recall |
 |--------------|-----------|--------|
-| 25 | 0.693 | 0.539 |
-| 50 | 0.510 | 0.714 |
-| 100 | 0.359 | 0.837 |
+| 25 | 0.618 | 0.522 |
+| 50 | 0.422 | 0.647 |
+| 100 | 0.282 | 0.730 |
 
 Prequential check: four weekly test folds, newest first, each trained on
 everything before a 7-day gap:
 
 | Fold | Test days | Positives | Average precision | Precision at 50/day |
 |------|-----------|-----------|-------------------|---------------------|
-| 0 | 87-93 | 139 | 0.7395 | 0.709 |
-| 1 | 80-86 | 206 | 0.6392 | 0.417 |
-| 2 | 73-79 | 208 | 0.6870 | 0.449 |
-| 3 | 66-72 | 300 | 0.6871 | 0.554 |
+| 0 | 87-93 | 103 | 0.5643 | 0.530 |
+| 1 | 80-86 | 206 | 0.5671 | 0.360 |
+| 2 | 73-79 | 195 | 0.6281 | 0.411 |
+| 3 | 66-72 | 227 | 0.6452 | 0.423 |
 
-Average precision 0.6882 +/- 0.0355 across folds.
+Average precision 0.6012 +/- 0.0360 across folds.
 
 Recall per typology:
 
 | Typology | at 0.1% FPR | at 1% FPR |
 |----------|-------------|-----------|
-| cnp_burst | 0.350 | 0.762 |
-| account_takeover | 0.894 | 0.988 |
-| money_mule | 0.663 | 0.955 |
-| structuring | 0.950 | 1.000 |
-| app_fraud | 0.538 | 0.938 |
+| cnp_burst | 0.153 | 0.510 |
+| account_takeover | 1.000 | 1.000 |
+| money_mule | 0.883 | 0.950 |
+| structuring | 0.923 | 1.000 |
+| app_fraud | 0.657 | 0.919 |
 
 ## Cost
 
 Missed fraud costs its amount, a missed money-mule or structuring case a flat
 500 EUR, each alert 4 EUR of analyst time. The
-threshold 0.0127 minimises that cost on the calibration window; on the
-test window it raises 3228 alerts and costs 17991 EUR against
-429005 EUR with no model.
+threshold 0.0152 minimises that cost on the calibration window; on the
+test window it raises 3204 alerts and costs 29993 EUR against
+464300 EUR with no model.
 
 ## Reason codes and importance
 
@@ -113,23 +113,23 @@ value. Global importance (share of split gain or of |weight|):
 
 | Feature | Share |
 |---------|-------|
-| amount_log10 | 0.299 |
-| txn_count_1h | 0.098 |
-| balance_drain_ratio | 0.092 |
-| beneficiary_age_days_log | 0.068 |
-| inbound_24h_log10 | 0.056 |
-| is_card | 0.051 |
-| ip_country_mismatch | 0.048 |
-| is_online | 0.045 |
+| beneficiary_age_hours | 0.339 |
+| amount | 0.162 |
+| counterparty_country_is_residence | 0.076 |
+| in_sum_24h | 0.070 |
+| balance | 0.056 |
+| minutes_since_last_inbound | 0.045 |
+| hour_of_day_utc | 0.041 |
+| card_online | 0.034 |
 
 ## Drift
 
 Population stability index between the training and test windows; review at
 0.1, retrain at 0.25. At or above 0.1:
 
-- balance_drain_ratio: 0.276 (retrain)
+- out_sum_30d: 0.113 (review)
 
-Score PSI: 0.0011. In production the OCaml `Monitor` keeps
+Score PSI: 0.0002. In production the OCaml `Monitor` keeps
 the same score histogram over live traffic and exports it for alerting.
 
 ## Limitations
@@ -141,10 +141,13 @@ the same score histogram over live traffic and exports it for alerting.
   much of that load.
 - Features need the customer's recent history; a cold-start customer scores on
   defaults.
-- Balances in the generator grow over the window (salaries exceed spending), so
-  `balance_drain_ratio` drifts between training and test; the drift check is
-  expected to flag it.
+- Rolling 30-day sums start empty on the generator's first day, so
+  `out_sum_30d` is lower in the early training days than in the test window; the
+  drift check is expected to flag it.
+- Card velocity comes only from `card_auths_10m` and `card_declines_10m`; the
+  outgoing counts and sums in risk-rules `Features` cover transfers, so stolen-card
+  bursts stay the weakest typology.
 
 ## Feature schema
 
-`txn-features` v1, digest `4451fa83bbfdc7994f1f4942758d1968`.
+`risk-rules-features` v1, digest `405b88b3692809d1dde4e6e214006b69`.

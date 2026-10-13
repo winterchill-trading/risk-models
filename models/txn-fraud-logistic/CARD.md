@@ -21,10 +21,10 @@ The model's output enters the decision as two rules next to the deterministic
 rules in risk-rules:
 
 - `model_review` (severity Review) when the calibrated score is at least
-  0.2102, the lowest score that kept the calibration window within
+  0.1798, the lowest score that kept the calibration window within
   50 alerts a day (the daily alert budget).
 - `model_block` (severity Block) when the score is at least the lowest value whose
-  precision on the calibration window was 90% or more: 0.9333.
+  precision on the calibration window was 90% or more: 0.8000.
 
 Both rules start in shadow mode (severity Allow): hits are journaled with the
 score, the model name and the top three reasons, but change no decision. Promote
@@ -34,10 +34,10 @@ point.
 
 | Rule | Threshold | Alerts a day | Precision | Recall |
 |------|-----------|--------------|-----------|--------|
-| review (calibration window) | 0.2102 | 47.7 | 0.401 | 0.609 |
-| review (test window) | 0.2102 | 37.8 | 0.377 | 0.541 |
-| block (calibration window) | 0.9333 | 3.2 | 0.978 | 0.100 |
-| block (test window) | 0.9333 | 2.2 | 0.915 | 0.078 |
+| review (calibration window) | 0.1798 | 40.1 | 0.469 | 0.566 |
+| review (test window) | 0.1798 | 31.3 | 0.425 | 0.528 |
+| block (calibration window) | 0.8000 | 8.1 | 0.965 | 0.237 |
+| block (test window) | 0.8000 | 4.9 | 0.806 | 0.157 |
 
 ## Data and validation
 
@@ -51,45 +51,45 @@ fraud.
 Splits are time-ordered, never random, with a 7-day label delay gap: days 0-51
 train, 52-65 calibrate, 66-72 are dropped (labels such as chargebacks and scam
 claims arrive late, so the last week before a decision point is unlabelled), 73
-onwards test. Rows: 427211 train, 116052
-calibration, 150359 test (553 positive in test).
+onwards test. Rows: 418013 train, 112212
+calibration, 146504 test (504 positive in test).
 
 ## Metrics (test window)
 
 | Metric | Value |
 |--------|-------|
-| Average precision (PR-AUC) | 0.4431 |
-| ROC-AUC | 0.9830 |
-| Recall at 0.1% FPR | 0.371 |
-| Recall at 1% FPR | 0.694 |
-| Brier score | 0.002553 |
-| Expected calibration error | 0.000138 |
+| Average precision (PR-AUC) | 0.4362 |
+| ROC-AUC | 0.9716 |
+| Recall at 0.1% FPR | 0.369 |
+| Recall at 1% FPR | 0.635 |
+| Brier score | 0.002380 |
+| Expected calibration error | 0.000194 |
 
 At a daily alert budget (the k highest scores each day):
 
 | Alerts a day | Precision | Recall |
 |--------------|-----------|--------|
-| 25 | 0.568 | 0.420 |
-| 50 | 0.435 | 0.571 |
-| 100 | 0.327 | 0.714 |
+| 25 | 0.564 | 0.468 |
+| 50 | 0.381 | 0.565 |
+| 100 | 0.267 | 0.669 |
 
 Recall per typology:
 
 | Typology | at 0.1% FPR | at 1% FPR |
 |----------|-------------|-----------|
-| cnp_burst | 0.238 | 0.551 |
-| account_takeover | 0.565 | 0.824 |
-| money_mule | 0.562 | 0.910 |
-| structuring | 0.750 | 1.000 |
-| app_fraud | 0.338 | 0.785 |
+| cnp_burst | 0.129 | 0.361 |
+| account_takeover | 0.614 | 0.880 |
+| money_mule | 0.617 | 0.917 |
+| structuring | 0.308 | 1.000 |
+| app_fraud | 0.626 | 0.899 |
 
 ## Cost
 
 Missed fraud costs its amount, a missed money-mule or structuring case a flat
 500 EUR, each alert 4 EUR of analyst time. The
-threshold 0.0160 minimises that cost on the calibration window; on the
-test window it raises 3313 alerts and costs 27340 EUR against
-429005 EUR with no model.
+threshold 0.0187 minimises that cost on the calibration window; on the
+test window it raises 2202 alerts and costs 30041 EUR against
+464300 EUR with no model.
 
 ## Reason codes and importance
 
@@ -101,23 +101,23 @@ value. Global importance (share of split gain or of |weight|):
 
 | Feature | Share |
 |---------|-------|
-| is_card | 0.203 |
-| is_online | 0.136 |
-| amount_log10 | 0.102 |
-| beneficiary_age_days_log | 0.100 |
-| hour_cos | 0.056 |
-| ip_country_mismatch | 0.041 |
-| hour_sin | 0.035 |
-| inbound_24h_log10 | 0.032 |
+| card_online | 0.154 |
+| in_sum_24h | 0.073 |
+| amount | 0.062 |
+| log1p_amount | 0.062 |
+| counterparty_country_is_residence | 0.045 |
+| ip_country_is_residence | 0.039 |
+| card_auths_10m | 0.038 |
+| card_atm | 0.038 |
 
 ## Drift
 
 Population stability index between the training and test windows; review at
 0.1, retrain at 0.25. At or above 0.1:
 
-- balance_drain_ratio: 0.276 (retrain)
+- out_sum_30d: 0.113 (review)
 
-Score PSI: 0.0007. In production the OCaml `Monitor` keeps
+Score PSI: 0.0022. In production the OCaml `Monitor` keeps
 the same score histogram over live traffic and exports it for alerting.
 
 ## Limitations
@@ -129,10 +129,13 @@ the same score histogram over live traffic and exports it for alerting.
   much of that load.
 - Features need the customer's recent history; a cold-start customer scores on
   defaults.
-- Balances in the generator grow over the window (salaries exceed spending), so
-  `balance_drain_ratio` drifts between training and test; the drift check is
-  expected to flag it.
+- Rolling 30-day sums start empty on the generator's first day, so
+  `out_sum_30d` is lower in the early training days than in the test window; the
+  drift check is expected to flag it.
+- Card velocity comes only from `card_auths_10m` and `card_declines_10m`; the
+  outgoing counts and sums in risk-rules `Features` cover transfers, so stolen-card
+  bursts stay the weakest typology.
 
 ## Feature schema
 
-`txn-features` v1, digest `4451fa83bbfdc7994f1f4942758d1968`.
+`risk-rules-features` v1, digest `405b88b3692809d1dde4e6e214006b69`.
