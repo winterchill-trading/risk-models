@@ -68,7 +68,7 @@ let schema_of_yojson json =
       [%message "schema digest does not match its feature names" digest schema.digest]
 ;;
 
-let of_yojson ?(expected = Schema.txn_features_v1) json =
+let of_yojson ?(expected = Encoding.schema) json =
   let open Or_error.Let_syntax in
   let open Json_util in
   let%bind format = field "format" int json in

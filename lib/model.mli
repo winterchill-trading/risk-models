@@ -38,7 +38,7 @@ val create
   -> Calibration.t
   -> t Or_error.t
 
-(** [expected] defaults to [Schema.txn_features_v1]. *)
+(** [expected] defaults to [Encoding.schema]. *)
 val of_yojson : ?expected:Schema.t -> Yojson.Safe.t -> t Or_error.t
 
 val load : ?expected:Schema.t -> string -> t Or_error.t

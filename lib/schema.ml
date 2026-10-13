@@ -58,38 +58,6 @@ let check_compatible ~expected t =
           ~got:((t.name, t.version, t.digest) : string * int * string)]
 ;;
 
-let txn_features_v1 =
-  create_exn
-    ~name:"txn-features"
-    ~version:1
-    [ "amount_log10"
-    ; "hour_sin"
-    ; "hour_cos"
-    ; "is_weekend"
-    ; "is_card"
-    ; "is_online"
-    ; "is_crypto"
-    ; "beneficiary_new"
-    ; "beneficiary_age_days_log"
-    ; "txn_count_1h"
-    ; "txn_count_24h"
-    ; "amount_sum_24h_log10"
-    ; "amount_ratio_30d_log10"
-    ; "distinct_beneficiaries_24h"
-    ; "inbound_24h_log10"
-    ; "inbound_share_of_balance"
-    ; "near_threshold"
-    ; "near_threshold_count_7d"
-    ; "new_device"
-    ; "hours_since_credential_change_log"
-    ; "ip_country_mismatch"
-    ; "foreign_merchant"
-    ; "mcc_high_risk"
-    ; "account_age_days_log"
-    ; "balance_drain_ratio"
-    ]
-;;
-
 module Stable = struct
   module V1 = struct
     type t = Repr.t [@@deriving bin_io, compare, equal, sexp_of]

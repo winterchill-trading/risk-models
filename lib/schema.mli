@@ -31,9 +31,6 @@ val index_exn : t -> string -> int
     order. *)
 val check_compatible : expected:t -> t -> unit Or_error.t
 
-(** The schema the bundled models were trained on: [python/risk_models_train/schema.py]. *)
-val txn_features_v1 : t
-
 module Stable : sig
   module V1 : sig
     type nonrec t = t [@@deriving bin_io, sexp, compare, equal]
