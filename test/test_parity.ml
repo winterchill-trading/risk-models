@@ -40,7 +40,20 @@ let check name =
     let got =
       List.map s.reasons ~f:(fun (f, _) -> Schema.index_exn (Scorer.schema model) f)
     in
-    if not (List.equal Int.equal got reasons) then incr reason_mismatch);
+    (* Reason codes may differ only where two contributions are within 1e-12 of each other
+       (or of zero): libm's [log1p] differs in the last bit between macOS and Linux, which
+       reorders near-ties in the logistic model's contributions. *)
+    let into = Array.create ~len:(Array.length x) 0. in
+    ignore (Scorer.contributions_u model x ~into : float#);
+    let near a b = Float.( <= ) (Float.abs (a -. b)) 1e-12 in
+    let rec agree got want =
+      match got, want with
+      | [], [] -> true
+      | g :: gs, w :: ws -> (g = w || near into.(g) into.(w)) && agree gs ws
+      | [ g ], [] | [], [ g ] -> near into.(g) 0.
+      | _ -> false
+    in
+    if not (agree got reasons) then incr reason_mismatch);
   print_s
     [%message
       name
