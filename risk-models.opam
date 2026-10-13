@@ -13,6 +13,8 @@ depends: [
   "core"
   "ppx_jane"
   "yojson"
+  "risk-rules"
+  "core_unix"
   "odoc" {with-doc}
 ]
 build: [

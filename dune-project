@@ -22,4 +22,6 @@
   dune
   core
   ppx_jane
-  yojson))
+  yojson
+  risk-rules
+  core_unix))
