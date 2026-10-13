@@ -1,6 +1,8 @@
 (** Logistic regression on standardised features:
-    [margin = intercept + sum_i weight_i * (x_i - mean_i) / scale_i], summed in feature
-    order. A contribution is one term of that sum (relative to the training mean). *)
+    [margin = intercept + sum_i weight_i * (x'_i - mean_i) / scale_i], summed in feature
+    order, where [x'_i = log1p (max x_i 0)] for the features flagged [log1p] and [x_i]
+    otherwise. A missing (NaN) feature was imputed with the training mean, so its term is
+    zero and it is skipped. A contribution is one term of that sum. *)
 
 open! Core
 
@@ -11,6 +13,7 @@ val create
   -> weights:float array
   -> mean:float array
   -> scale:float array
+  -> log1p:bool array
   -> t Or_error.t
 
 (** The [logistic] object of the exported model format. *)
