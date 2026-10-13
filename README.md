@@ -42,13 +42,13 @@ Score in OCaml:
 open! Core
 open Risk_models
 
-let model = Model.load "models/txn-fraud-gbdt/model.json" |> Or_error.ok_exn
+let model = Scorer.load "models/txn-fraud-gbdt/model.json" |> Or_error.ok_exn
 
 (* A Risk_rules.Features.t, computed by risk-rules from a Context. *)
 let decide features =
   let x = Encoding.encode features in
-  let p = Model.score model x in                    (* calibrated probability *)
-  let s = Model.explain model x in                  (* score + top 3 reasons *)
+  let p = Scorer.score model x in                    (* calibrated probability *)
+  let s = Scorer.explain model x in    (* Risk_rules.Model.Score.t, top 3 reasons *)
   p, s.reasons
 
 (* Or hand the model to risk-rules: two rules, capped at Allow until promoted. *)
@@ -73,11 +73,11 @@ No environment variables, credentials or network access are needed.
 |--------|------------|
 | `Schema` | ordered feature names with a digest (hex MD5 of the names joined by newlines, identical in Python) |
 | `Encoding` | `Risk_rules.Features.t -> float array`: `Features.to_floats` order, then one-hot columns for `rail`, `card_channel`, `payee_check` |
-| `Forest` | tree ensemble in flat arrays; `margin_u` and `contributions_u` are `[@zero_alloc]` |
+| `Forest` | tree ensemble in flat arrays with per-split missing-value modes; `margin_u` and `contributions_u` are `[@zero_alloc]` |
 | `Linear` | the logistic baseline (log1p on heavy-tailed features, missing features contribute nothing) |
 | `Calibration` | isotonic (numpy `interp` semantics), Platt or identity; `apply_u` is `[@zero_alloc]` |
-| `Model` | loads `model.json`, refuses a schema digest mismatch; margin, probability, calibrated score, `explain` with reasons |
-| `Score` | score, margin and reasons; `Stable.V1` bin_io for journaling next to the decision |
+| `Lightgbm_dump` | reads LightGBM `Booster.dump_model()` JSON into a `Forest` (binary objective, numerical splits, `missing_type` NaN/None/Zero) |
+| `Scorer` | loads `model.json`, refuses a schema digest mismatch; margin, probability, calibrated score, `explain` returning a `Risk_rules.Model.Score.t` |
 | `Risk_model` | `Risk_rules.Model.S` adapter, `model_review` and `model_block` rules, shadow mode, policy specs |
 | `Monitor` | live score histogram, PSI against the calibration window, Stable/Review/Retrain, Prometheus text |
 | `Bench` | scoring latency and allocation |
@@ -89,7 +89,7 @@ No environment variables, credentials or network access are needed.
   `python/risk_models_train/features.json`, which the Python side reads. A test fails
   when the committed file and the library disagree, so a risk-rules schema change
   shows up in CI here.
-- Every `model.json` records the schema digest; `Model.load` refuses a model trained
+- Every `model.json` records the schema digest; `Scorer.load` refuses a model trained
   on another layout.
 - `Risk_model.to_risk_rules` is a `Risk_rules.Model.S`: name, version (first 12 hex
   digits of the MD5 of the model JSON), and `score : Features.t -> Score.t` with the
@@ -119,9 +119,10 @@ counts near the budget.
 `model.json` (format 1), written by `python/export.py`:
 
 - `schema`: name, version, feature names, digest
-- `kind`: `gbdt` (trees as parallel arrays: `feature` (-1 = leaf), `threshold`,
-  `missing_left`, `left`, `right`, `value`) or `logistic` (`intercept`, `weights`,
-  `mean`, `scale`, `log1p`)
+- `kind`: `gbdt` (scikit-learn trees as parallel arrays: `feature` (-1 = leaf),
+  `threshold`, `missing_left`, `left`, `right`, `value`), `lightgbm` (the booster's
+  `dump_model()` with gains and weights stripped) or `logistic` (`intercept`,
+  `weights`, `mean`, `scale`, `log1p`)
 - `calibration`: isotonic knots
 - `reference`: score histogram on the calibration window, for `Monitor`
 - `thresholds`: review and block, with the budget and precision target they were chosen for
@@ -138,16 +139,16 @@ present) is written as the largest finite double.
 Time-ordered split with a 7-day label delay gap: days 0-51 train, 52-65 calibrate,
 66-72 dropped, 73-90 test (146 504 rows, 504 positive, 0.34%).
 
-| | Gradient-boosted | Logistic baseline |
-|---|---|---|
-| Average precision | 0.547 | 0.436 |
-| ROC-AUC | 0.979 | 0.972 |
-| Precision at 25 / 50 / 100 alerts a day | 0.618 / 0.422 / 0.282 | 0.564 / 0.381 / 0.267 |
-| Recall at 50 alerts a day | 0.647 | 0.565 |
-| Recall at 0.1% / 1% FPR | 0.498 / 0.736 | 0.369 / 0.635 |
-| Review rule on test (alerts a day, precision, recall) | 36.8, 0.42, 0.61 | 31.3, 0.42, 0.53 |
-| Block rule on test (alerts a day, precision, recall) | 10.8, 0.81, 0.35 | 4.9, 0.81, 0.16 |
-| Prequential average precision (4 weekly folds) | 0.601 +/- 0.036 | |
+| | scikit-learn trees | LightGBM | Logistic baseline |
+|---|---|---|---|
+| Average precision | 0.547 | 0.544 | 0.436 |
+| ROC-AUC | 0.979 | 0.980 | 0.972 |
+| Precision at 25 / 50 / 100 alerts a day | 0.618 / 0.422 / 0.282 | 0.620 / 0.416 / 0.280 | 0.564 / 0.381 / 0.267 |
+| Recall at 50 alerts a day | 0.647 | 0.635 | 0.565 |
+| Recall at 0.1% / 1% FPR | 0.498 / 0.736 | 0.486 / 0.726 | 0.369 / 0.635 |
+| Review rule on test (alerts a day, precision, recall) | 36.8, 0.42, 0.61 | 36.0, 0.43, 0.61 | 31.3, 0.42, 0.53 |
+| Block rule on test (alerts a day, precision, recall) | 10.8, 0.81, 0.35 | 10.6, 0.84, 0.35 | 4.9, 0.81, 0.16 |
+| Prequential average precision (4 weekly folds) | 0.601 +/- 0.036 | | |
 
 Recall at 1% FPR per typology (gradient-boosted): card-not-present bursts 0.51,
 account takeover 1.00, money mules 0.95, structuring 1.00, push payment fraud 0.92.
@@ -159,20 +160,24 @@ cards (`models/*/CARD.md`) have the full tables, cost figures and drift checks.
 
 On an Apple M-series laptop, release build, rows from the parity fixture:
 
-| | `Model.score_u` | `Model.explain` |
+| | `Scorer.score_u` | `Scorer.explain` |
 |---|---|---|
-| Gradient-boosted (150 trees, 4350 nodes) | 2.1 us, 0 words | 3.4 us, 480 words |
+| scikit-learn trees (150 trees, 4350 nodes) | 2.1 us, 0 words | 3.4 us, 480 words |
+| LightGBM (150 trees, 4350 nodes) | 2.5 us, 0 words | 3.8 us, 520 words |
 | Logistic | 0.18 us, 0 words | 0.67 us, 574 words |
 
 Per-call percentiles from `risk-models bench` are quantised to 1 us by the macOS clock.
-Scoring a model and feeding the score into `Monitor.observe_u` allocates nothing (an
+Scoring and feeding the score into `Monitor.observe_u` allocates nothing (an
 expect test pins 0 words).
 
 Parity: `test/test_parity.ml` scores the 1000 committed rows per model (with missing
 values and values exactly at split thresholds) and requires margin, probability and
-calibrated score within 1e-9 of the Python reference and identical reason codes. The
-gradient-boosted model matches bit for bit; the logistic one within 1e-14. The Python
-reference itself matches scikit-learn within 1e-10 before export.
+calibrated score within 1e-9 of the Python reference (the research note asks for 1e-6)
+and identical reason codes. The scikit-learn and logistic models match bit for bit on
+macOS arm64, LightGBM within 1.1e-16; the
+tolerance leaves room for a last-bit `exp` difference between platform maths
+libraries. The Python reference itself matches scikit-learn within 1e-10 before
+export.
 
 ## CI
 
@@ -188,6 +193,8 @@ replaces the committed models.
   is no loader for one.
 - The generator re-implements the risk-rules feature definitions in Python instead of
   exporting rows through `Features.of_context`.
-- Only scikit-learn's HistGradientBoosting export is read; XGBoost and LightGBM JSON
-  parsers (strict-less-than float32 splits, `missing_type`) are not written yet.
+- scikit-learn HistGradientBoosting and LightGBM are read; an XGBoost JSON parser
+  (strict less-than splits compared in float32) is not written yet. The LightGBM
+  parity fixture has extra missing values but no rows placed exactly on split
+  thresholds (the scikit-learn one has 40).
 - Reason codes are path attributions, not TreeSHAP.
