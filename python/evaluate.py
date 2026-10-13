@@ -34,7 +34,7 @@ from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_s
 
 from risk_models_train import schema
 from risk_models_train.splits import DAY, prequential
-from train import load, make_gbdt, split
+from train import linear_inputs, load, make_gbdt, split
 
 BUDGETS = [25, 50, 100]  # alerts a day an operations team can review
 REVIEW_BUDGET = 50
@@ -51,7 +51,11 @@ AML = {schema.TYPOLOGIES.index("money_mule"), schema.TYPOLOGIES.index("structuri
 def raw_scores(entry, X):
     if "gbdt" in entry:
         return entry["gbdt"].predict_proba(X)[:, 1]
-    return entry["logit"].predict_proba(entry["scaler"].transform(X))[:, 1]
+    return entry["logit"].predict_proba(linear_view(entry, X))[:, 1]
+
+
+def linear_view(entry, X):
+    return entry["scaler"].transform(entry["imputer"].transform(linear_inputs(X)))
 
 
 def scores(entry, X):
@@ -388,9 +392,12 @@ def card(m, entry):
         "  much of that load.",
         "- Features need the customer's recent history; a cold-start customer scores on",
         "  defaults.",
-        "- Balances in the generator grow over the window (salaries exceed spending), so",
-        "  `balance_drain_ratio` drifts between training and test; the drift check is",
-        "  expected to flag it.",
+        "- Rolling 30-day sums start empty on the generator's first day, so",
+        "  `out_sum_30d` is lower in the early training days than in the test window; the",
+        "  drift check is expected to flag it.",
+        "- Card velocity comes only from `card_auths_10m` and `card_declines_10m`; the",
+        "  outgoing counts and sums in risk-rules `Features` cover transfers, so stolen-card",
+        "  bursts stay the weakest typology.",
         "",
         "## Feature schema",
         "",
