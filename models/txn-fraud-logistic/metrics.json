@@ -1,94 +1,145 @@
 {
  "name": "txn-fraud-logistic",
  "rows": {
-  "train": 497407,
-  "calibration": 115148,
-  "test": 138689
+  "train": 427211,
+  "calibration": 116052,
+  "test": 150359
  },
- "positives_test": 513,
- "pr_auc": 0.44787588128926664,
- "roc_auc": 0.9837095422331109,
- "brier": 0.002585823541432625,
- "ece": 0.00033566103319312426,
+ "positives_test": 553,
+ "pr_auc": 0.4431236043513576,
+ "roc_auc": 0.9830437963177403,
+ "brier": 0.0025534265673181475,
+ "ece": 0.00013835710810862316,
+ "at_budget": [
+  {
+   "k": 25,
+   "precision": 0.5676190476190477,
+   "recall": 0.41952983725135623
+  },
+  {
+   "k": 50,
+   "precision": 0.43523809523809526,
+   "recall": 0.5714285714285714
+  },
+  {
+   "k": 100,
+   "precision": 0.32666666666666666,
+   "recall": 0.7142857142857143
+  }
+ ],
+ "rules": {
+  "review_budget_per_day": 50,
+  "block_precision": 0.9,
+  "review": 0.21019108280254778,
+  "block": 0.9333333333333333,
+  "calibration_window": {
+   "review": {
+    "threshold": 0.21019108280254778,
+    "alerts_per_day": 47.714285714285715,
+    "precision": 0.40119760479041916,
+    "recall": 0.6090909090909091
+   },
+   "block": {
+    "threshold": 0.9333333333333333,
+    "alerts_per_day": 3.2142857142857144,
+    "precision": 0.9777777777777777,
+    "recall": 0.1
+   }
+  },
+  "test_window": {
+   "review": {
+    "threshold": 0.21019108280254778,
+    "alerts_per_day": 37.80952380952381,
+    "precision": 0.3765743073047859,
+    "recall": 0.5406871609403255
+   },
+   "block": {
+    "threshold": 0.9333333333333333,
+    "alerts_per_day": 2.238095238095238,
+    "precision": 0.9148936170212766,
+    "recall": 0.07775768535262206
+   }
+  }
+ },
  "at_fpr_0.1%": {
-  "threshold": 0.3951612903225806,
-  "recall": 0.34502923976608185,
-  "cnp_burst": 0.2222222222222222,
-  "account_takeover": 0.5487804878048781,
-  "money_mule": 0.5061728395061729,
-  "structuring": 0.7142857142857143,
-  "app_fraud": 0.3333333333333333
+  "threshold": 0.28346456692913385,
+  "recall": 0.3707052441229656,
+  "cnp_burst": 0.23809523809523808,
+  "account_takeover": 0.5647058823529412,
+  "money_mule": 0.5617977528089888,
+  "structuring": 0.75,
+  "app_fraud": 0.3384615384615385
  },
  "at_fpr_1%": {
-  "threshold": 0.05241935483870968,
-  "recall": 0.7192982456140351,
-  "cnp_burst": 0.5806451612903226,
-  "account_takeover": 0.8658536585365854,
-  "money_mule": 0.9259259259259259,
+  "threshold": 0.06687898089171974,
+  "recall": 0.6943942133815552,
+  "cnp_burst": 0.5510204081632653,
+  "account_takeover": 0.8235294117647058,
+  "money_mule": 0.9101123595505618,
   "structuring": 1.0,
-  "app_fraud": 0.8245614035087719
+  "app_fraud": 0.7846153846153846
  },
  "cost": {
   "review_cost_eur": 4.0,
   "aml_miss_cost_eur": 500.0,
-  "threshold": 0.01816608996539792,
-  "alerts": 2824,
-  "model_eur": 25358.769999999997,
-  "no_model_eur": 385970.56
+  "threshold": 0.016023306627822288,
+  "alerts": 3313,
+  "model_eur": 27339.88,
+  "no_model_eur": 429005.21
  },
  "drift_psi": {
-  "score": 0.0005898448323087297,
-  "amount_log10": 0.0006262908985526984,
-  "hour_sin": 0.0017735975696224092,
-  "hour_cos": 0.0010991670752505283,
-  "is_weekend": 0.04047653141854575,
-  "is_card": 0.0013438334470088813,
-  "is_online": 0.0001265371339172387,
-  "is_crypto": 1.103242029877203e-05,
-  "beneficiary_new": 0.02683650922743654,
-  "beneficiary_age_days_log": 0.0013559454787362753,
-  "txn_count_1h": 0.00017694568025422743,
-  "txn_count_24h": 0.0018089327429528699,
-  "amount_sum_24h_log10": 0.009752649479577194,
-  "amount_ratio_30d_log10": 0.006041883987840711,
-  "distinct_beneficiaries_24h": 8.052112940295267e-05,
-  "inbound_24h_log10": 0.0018676811297720249,
-  "inbound_share_of_balance": 0.0028267401896700417,
-  "near_threshold": 0.00016075586803632365,
-  "near_threshold_count_7d": 0.0001593725178462854,
-  "new_device": 5.2294357211635404e-05,
-  "hours_since_credential_change_log": 4.041817044413593e-12,
-  "ip_country_mismatch": 0.00043345956613821874,
-  "foreign_merchant": 0.00038325070724220866,
-  "mcc_high_risk": 4.334531985254895e-06,
-  "account_age_days_log": 0.026971252867038855,
-  "balance_drain_ratio": 0.2510849764860829
+  "score": 0.0006702007538627789,
+  "amount_log10": 0.00035028190624188934,
+  "hour_sin": 7.231578982342646e-05,
+  "hour_cos": 9.708758681239543e-05,
+  "is_weekend": 0.017608435031896453,
+  "is_card": 0.0007170687523101202,
+  "is_online": 8.456857556971307e-05,
+  "is_crypto": 3.2243198468421595e-06,
+  "beneficiary_new": 0.030432272850752312,
+  "beneficiary_age_days_log": 0.0007167458058522978,
+  "txn_count_1h": 0.00018700961332825656,
+  "txn_count_24h": 0.0016954542790667921,
+  "amount_sum_24h_log10": 0.01383374743307641,
+  "amount_ratio_30d_log10": 0.008371559813198938,
+  "distinct_beneficiaries_24h": 7.793592522313562e-05,
+  "inbound_24h_log10": 0.00265160581139959,
+  "inbound_share_of_balance": 0.003764077716970948,
+  "near_threshold": 9.559276961007867e-05,
+  "near_threshold_count_7d": 0.00010029324998150134,
+  "new_device": 4.8938375067593775e-05,
+  "hours_since_credential_change_log": 5.47918110041933e-12,
+  "ip_country_mismatch": 0.00032562617722854383,
+  "foreign_merchant": 0.0003155699319009626,
+  "mcc_high_risk": 3.234291540057093e-06,
+  "account_age_days_log": 0.030678376601762477,
+  "balance_drain_ratio": 0.2760900020276844
  },
  "importance": {
-  "amount_log10": 0.09705101067157768,
-  "hour_sin": 0.03314543644946523,
-  "hour_cos": 0.05756177255298753,
-  "is_weekend": 0.023888572879248025,
-  "is_card": 0.2074290421584944,
-  "is_online": 0.13921307632601085,
-  "is_crypto": 0.0046815435809521395,
-  "beneficiary_new": 0.02601040515858791,
-  "beneficiary_age_days_log": 0.10212828940222085,
-  "txn_count_1h": 0.023035104207231483,
-  "txn_count_24h": 0.027431932268534905,
-  "amount_sum_24h_log10": 0.009935093397162358,
-  "amount_ratio_30d_log10": 0.010209409953266392,
-  "distinct_beneficiaries_24h": 0.002134153820075155,
-  "inbound_24h_log10": 0.03414634577386486,
-  "inbound_share_of_balance": 0.02013480633058628,
-  "near_threshold": 0.0038043090909197735,
-  "near_threshold_count_7d": 0.010938402524409493,
-  "new_device": 0.0041213664408639265,
-  "hours_since_credential_change_log": 0.013762638322450699,
-  "ip_country_mismatch": 0.04156704089018686,
-  "foreign_merchant": 0.025546552033218248,
-  "mcc_high_risk": 0.032117023655162794,
-  "account_age_days_log": 0.01706225118508559,
-  "balance_drain_ratio": 0.03294442092743653
+  "amount_log10": 0.10226990632649934,
+  "hour_sin": 0.03467689660322494,
+  "hour_cos": 0.05633476123869479,
+  "is_weekend": 0.02789990839047073,
+  "is_card": 0.20312192526222198,
+  "is_online": 0.1360448638406273,
+  "is_crypto": 0.004590822996606748,
+  "beneficiary_new": 0.026084663321348654,
+  "beneficiary_age_days_log": 0.10043933854491124,
+  "txn_count_1h": 0.023630791423843545,
+  "txn_count_24h": 0.027230438958340663,
+  "amount_sum_24h_log10": 0.011457499942448527,
+  "amount_ratio_30d_log10": 0.012343388897458746,
+  "distinct_beneficiaries_24h": 0.001890681856749825,
+  "inbound_24h_log10": 0.032440360668574184,
+  "inbound_share_of_balance": 0.01914242671190691,
+  "near_threshold": 0.003442882955107706,
+  "near_threshold_count_7d": 0.010507510910524548,
+  "new_device": 0.0038357283803698563,
+  "hours_since_credential_change_log": 0.013140797783638846,
+  "ip_country_mismatch": 0.04135477490717882,
+  "foreign_merchant": 0.02513627583836497,
+  "mcc_high_risk": 0.03215119139556079,
+  "account_age_days_log": 0.019141292373282697,
+  "balance_drain_ratio": 0.0316908704720436
  }
 }
