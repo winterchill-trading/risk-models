@@ -39,7 +39,8 @@ FEATURES = [
     "balance_drain_ratio",
 ]
 
-TYPOLOGIES = ["legit", "cnp_burst", "account_takeover", "mule", "structuring", "app_scam"]
+# Label names follow the risk-rules Typology names where one exists.
+TYPOLOGIES = ["legit", "cnp_burst", "account_takeover", "money_mule", "structuring", "app_fraud"]
 
 
 def digest(names=None):
