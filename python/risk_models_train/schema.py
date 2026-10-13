@@ -7,36 +7,29 @@ it scores against.
 """
 
 import hashlib
+import json
+import os
 
-SCHEMA_NAME = "txn-features"
-SCHEMA_VERSION = 1
+# The feature list comes from the OCaml side: `risk-models schema` prints risk-rules
+# `Features.numeric_names` (the vector `Features.to_floats` builds: booleans 0/1, a
+# missing option NaN) followed by the one-hot columns risk-models adds for the
+# categorical fields (`rail`, `card_channel`, `payee_check`). risk-rules owns the
+# meaning of every field. Regenerate features.json after a risk-rules schema change;
+# an OCaml test fails while the committed file and the library disagree.
+with open(os.path.join(os.path.dirname(__file__), "features.json")) as _f:
+    _SCHEMA = json.load(_f)
 
-FEATURES = [
-    "amount_log10",
-    "hour_sin",
-    "hour_cos",
-    "is_weekend",
-    "is_card",
-    "is_online",
-    "is_crypto",
-    "beneficiary_new",
-    "beneficiary_age_days_log",
-    "txn_count_1h",
-    "txn_count_24h",
-    "amount_sum_24h_log10",
-    "amount_ratio_30d_log10",
-    "distinct_beneficiaries_24h",
-    "inbound_24h_log10",
-    "inbound_share_of_balance",
-    "near_threshold",
-    "near_threshold_count_7d",
-    "new_device",
-    "hours_since_credential_change_log",
-    "ip_country_mismatch",
-    "foreign_merchant",
-    "mcc_high_risk",
-    "account_age_days_log",
-    "balance_drain_ratio",
+SCHEMA_NAME = _SCHEMA["name"]
+SCHEMA_VERSION = _SCHEMA["version"]
+FEATURES = _SCHEMA["features"]
+
+# Heavy-tailed features the logistic baseline reads as log1p(max(x, 0)); the trees do
+# not care about monotone transforms and read the raw values.
+LOG_FEATURES = [
+    "amount", "balance", "amount_to_balance", "beneficiary_age_hours", "out_sum_1h",
+    "out_sum_24h", "out_sum_7d", "out_sum_30d", "in_sum_24h", "pass_through_ratio_24h",
+    "hours_since_credentials_change", "account_age_days", "amount_over_mean_30d",
+    "minutes_since_last_inbound",
 ]
 
 # Label names follow the risk-rules Typology names where one exists.
@@ -46,3 +39,6 @@ TYPOLOGIES = ["legit", "cnp_burst", "account_takeover", "money_mule", "structuri
 def digest(names=None):
     names = FEATURES if names is None else names
     return hashlib.md5("\n".join(names).encode()).hexdigest()
+
+
+assert digest() == _SCHEMA["digest"], "features.json digest does not match its names"

@@ -1,0 +1,21 @@
+{
+  "name": "risk-rules-features",
+  "version": 1,
+  "features": [
+    "is_card", "amount", "amount_is_round", "balance", "amount_to_balance",
+    "beneficiary_age_hours", "beneficiary_trusted",
+    "counterparty_country_is_residence", "self_hosted_unverified", "mcc",
+    "out_count_1h", "out_count_24h", "out_sum_24h", "out_sum_30d",
+    "out_distinct_beneficiaries_24h", "in_count_24h", "in_sum_24h",
+    "pass_through_ratio_24h", "new_device", "ip_country_is_residence",
+    "hours_since_credentials_change", "account_age_days", "hour_of_day_utc",
+    "log1p_amount", "is_weekend", "out_count_7d", "out_sum_1h", "out_sum_7d",
+    "amount_over_mean_30d", "in_distinct_senders_24h",
+    "minutes_since_last_inbound", "failed_sca_24h", "card_auths_10m",
+    "card_declines_10m", "rail_sepa_instant", "rail_onchain",
+    "rail_lightning", "rail_intraledger", "card_online", "card_atm",
+    "payee_match", "payee_close_match", "payee_no_match",
+    "payee_not_possible"
+  ],
+  "digest": "405b88b3692809d1dde4e6e214006b69"
+}
