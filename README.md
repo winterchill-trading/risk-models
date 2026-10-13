@@ -177,7 +177,8 @@ expect test pins 0 words).
 Parity: `test/test_parity.ml` scores the 1000 committed rows per model (with missing
 values and values exactly at split thresholds) and requires margin, probability and
 calibrated score within 1e-9 of the Python reference (the research note asks for 1e-6)
-and identical reason codes. The scikit-learn and logistic models match bit for bit on
+and the same reason codes (two codes may swap only when their contributions are
+within 1e-12: Linux and macOS `log1p` differ in the last bit). The scikit-learn and logistic models match bit for bit on
 macOS arm64, LightGBM within 1.1e-16; the
 tolerance leaves room for a last-bit `exp` difference between platform maths
 libraries. The Python reference itself matches scikit-learn within 1e-10 before
