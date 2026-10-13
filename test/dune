@@ -4,7 +4,7 @@
  (inline_tests
   (deps
    (glob_files fixtures/*.csv)
-   (glob_files_rec ../models/**.json))
+   (source_tree ../models))
   (flags
    (:standard -source-tree-root .)))
  (preprocess
