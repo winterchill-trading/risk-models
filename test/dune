@@ -1,6 +1,6 @@
 (library
  (name risk_models_test)
- (libraries risk-models core yojson stdlib_upstream_compatible)
+ (libraries risk-models risk-rules core yojson stdlib_upstream_compatible)
  (inline_tests
   (deps
    (glob_files fixtures/*.csv)
