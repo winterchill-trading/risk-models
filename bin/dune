@@ -1,0 +1,6 @@
+(executable
+ (name main)
+ (public_name risk-models)
+ (libraries risk-models core core_unix.command_unix yojson)
+ (preprocess
+  (pps ppx_jane)))
