@@ -13,6 +13,7 @@ import os
 import pickle
 import time
 
+import lightgbm as lgb
 import numpy as np
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.isotonic import IsotonicRegression
@@ -44,6 +45,15 @@ def linear_inputs(X):
     return X
 
 
+def make_lightgbm():
+    # Same shape as the scikit-learn model; deterministic so a rerun gives the same
+    # trees. The export reads Booster.dump_model() directly (lib/lightgbm_dump.ml).
+    return lgb.LGBMClassifier(
+        n_estimators=150, learning_rate=0.08, num_leaves=15, min_child_samples=40,
+        reg_lambda=1.0, deterministic=True, force_row_wise=True, random_state=0,
+        verbose=-1)
+
+
 def load(path):
     d = np.load(path)
     if str(d["digest"]) != schema.digest():
@@ -67,6 +77,11 @@ def main():
     print(f"gbdt: {gbdt.n_iter_} trees in {time.time() - start:.1f} s")
 
     start = time.time()
+    lgbm = make_lightgbm()
+    lgbm.fit(X[tr], y[tr])
+    print(f"lightgbm: {lgbm.n_estimators} trees in {time.time() - start:.1f} s")
+
+    start = time.time()
     imputer = SimpleImputer(strategy="mean").fit(linear_inputs(X[tr]))
     scaler = StandardScaler().fit(imputer.transform(linear_inputs(X[tr])))
     logit = LogisticRegression(C=1.0, max_iter=2000)
@@ -76,6 +91,7 @@ def main():
     models = {}
     for name, raw in [
         ("txn-fraud-gbdt", lambda Z: gbdt.predict_proba(Z)[:, 1]),
+        ("txn-fraud-lightgbm", lambda Z: lgbm.predict_proba(Z)[:, 1]),
         ("txn-fraud-logistic", lambda Z: logit.predict_proba(
             scaler.transform(imputer.transform(linear_inputs(Z))))[:, 1]),
     ]:
@@ -83,6 +99,7 @@ def main():
         iso.fit(raw(X[ca]), y[ca])
         models[name] = dict(iso=iso)
     models["txn-fraud-gbdt"]["gbdt"] = gbdt
+    models["txn-fraud-lightgbm"]["lgbm"] = lgbm
     models["txn-fraud-logistic"].update(imputer=imputer, scaler=scaler, logit=logit)
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
     with open(a.out, "wb") as f:

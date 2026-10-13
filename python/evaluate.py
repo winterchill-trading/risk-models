@@ -51,6 +51,8 @@ AML = {schema.TYPOLOGIES.index("money_mule"), schema.TYPOLOGIES.index("structuri
 def raw_scores(entry, X):
     if "gbdt" in entry:
         return entry["gbdt"].predict_proba(X)[:, 1]
+    if "lgbm" in entry:
+        return entry["lgbm"].predict_proba(X)[:, 1]
     return entry["logit"].predict_proba(linear_view(entry, X))[:, 1]
 
 
@@ -184,6 +186,9 @@ def importance(entry):
             split_nodes = nodes[nodes["is_leaf"] == 0]
             np.add.at(gain, split_nodes["feature_idx"], split_nodes["gain"])
         return gain / gain.sum()
+    if "lgbm" in entry:
+        gain = entry["lgbm"].booster_.feature_importance(importance_type="gain")
+        return gain / gain.sum()
     w = np.abs(entry["logit"].coef_[0])
     return w / w.sum()
 
@@ -239,8 +244,9 @@ def fmt_rule(r):
 
 
 def card(m, entry):
-    kind = "gradient-boosted trees (scikit-learn HistGradientBoosting)" if "gbdt" in entry \
-        else "logistic regression on standardised features"
+    kind = ("gradient-boosted trees (scikit-learn HistGradientBoosting)" if "gbdt" in entry
+            else "gradient-boosted trees (LightGBM)" if "lgbm" in entry
+            else "logistic regression on standardised features")
     f1, f01 = m["at_fpr_1%"], m["at_fpr_0.1%"]
     top = sorted(m["importance"].items(), key=lambda kv: -kv[1])[:8]
     c, r = m["cost"], m["rules"]

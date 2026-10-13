@@ -38,6 +38,8 @@ def margin_and_contributions(model, x):
                 node = child
             margin += tree["value"][node]
         return margin, contrib, bias
+    if model["kind"] == "lightgbm":
+        return lightgbm_margin(model["lightgbm"], x, contrib)
     lin = model["logistic"]
     margin = lin["intercept"]
     for i, (w, m, s, lg) in enumerate(
@@ -51,6 +53,46 @@ def margin_and_contributions(model, x):
         contrib[i] = c
         margin += c
     return margin, contrib, lin["intercept"]
+
+
+def _count(node):
+    if "leaf_value" in node:
+        return float(node.get("leaf_count", 1))
+    return float(node["internal_count"])
+
+
+def _expected(node):
+    """Count-weighted mean of the leaves below, same formula as lib/lightgbm_dump.ml."""
+    if "leaf_value" in node:
+        return node["leaf_value"]
+    l, r = node["left_child"], node["right_child"]
+    cl, cr = _count(l), _count(r)
+    return (cl * _expected(l) + cr * _expected(r)) / (cl + cr)
+
+
+def _goes_left(node, v):
+    """LightGBM's NumericalDecision for double inputs."""
+    missing = node["missing_type"]
+    if math.isnan(v) and missing != "NaN":
+        v = 0.0
+    if (missing == "Zero" and -1e-35 <= v <= 1e-35) or (missing == "NaN" and math.isnan(v)):
+        return node["default_left"]
+    return v <= node["threshold"]
+
+
+def lightgbm_margin(dump, x, contrib):
+    margin = 0.0
+    bias = 0.0
+    for tree in dump["tree_info"]:
+        node = tree["tree_structure"]
+        bias += _expected(node)
+        while "leaf_value" not in node:
+            child = node["left_child"] if _goes_left(node, x[node["split_feature"]]) \
+                else node["right_child"]
+            contrib[node["split_feature"]] += _expected(child) - _expected(node)
+            node = child
+        margin += node["leaf_value"]
+    return margin, contrib, bias
 
 
 def sigmoid(z):

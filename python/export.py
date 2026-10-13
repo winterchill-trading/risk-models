@@ -7,6 +7,8 @@ Format (format = 1):
               feature = -1 marks a leaf; value is the leaf value at leaves and the
               count-weighted expected value of the subtree at split nodes (used for
               reason codes only; the score sums leaf values)
+  lightgbm    Booster.dump_model() as LightGBM writes it (binary objective, numerical
+              splits only); OCaml flattens it into the same arrays as gbdt
   logistic    {intercept, weights, mean, scale, log1p}: x' = log1p(max(x, 0)) where log1p
               is 1, then margin = intercept + sum w*(x'-mean)/scale over present
               features; a missing (NaN) feature contributes nothing
@@ -70,6 +72,19 @@ def export_tree(pred):
         left=left.tolist(), right=right.tolist(), value=value.tolist())
 
 
+LGBM_KEEP = {"split_feature", "threshold", "decision_type", "default_left", "missing_type",
+             "internal_count", "left_child", "right_child", "leaf_value", "leaf_count"}
+
+
+def strip_lgbm(node):
+    """Drops gains, weights and internal values the scorer never reads."""
+    out = {k: v for k, v in node.items() if k in LGBM_KEEP}
+    for k in ("left_child", "right_child"):
+        if k in out:
+            out[k] = strip_lgbm(out[k])
+    return out
+
+
 def to_json(name, entry, metrics, ref_scores):
     m = dict(
         format=1, name=name, link="logistic",
@@ -80,6 +95,16 @@ def to_json(name, entry, metrics, ref_scores):
         m["kind"] = "gbdt"
         m["gbdt"] = dict(base_score=float(g._baseline_prediction.ravel()[0]),
                          trees=[export_tree(p) for (p,) in g._predictors])
+    elif "lgbm" in entry:
+        m["kind"] = "lightgbm"
+        dump = entry["lgbm"].booster_.dump_model()
+        # Keep only what the scorer reads; feature_infos and importances are noise here.
+        m["lightgbm"] = {k: dump[k] for k in (
+            "version", "num_class", "num_tree_per_iteration", "objective", "average_output",
+            "feature_names")}
+        m["lightgbm"]["tree_info"] = [
+            {"num_cat": t["num_cat"], "tree_structure": strip_lgbm(t["tree_structure"])}
+            for t in dump["tree_info"]]
     else:
         sc, lr = entry["scaler"], entry["logit"]
         m["kind"] = "logistic"
@@ -105,6 +130,9 @@ def sklearn_margin_and_prob(entry, X):
     if "gbdt" in entry:
         g = entry["gbdt"]
         return g.decision_function(X), g.predict_proba(X)[:, 1]
+    if "lgbm" in entry:
+        g = entry["lgbm"]
+        return g.predict(X, raw_score=True), g.predict_proba(X)[:, 1]
     Z = linear_view(entry, X)
     return entry["logit"].decision_function(Z), entry["logit"].predict_proba(Z)[:, 1]
 
