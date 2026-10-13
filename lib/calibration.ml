@@ -44,33 +44,20 @@ let isotonic ~x ~y =
   else Ok (Isotonic { x; y })
 ;;
 
-let float_of_json = function
-  | `Float f -> Ok f
-  | `Int i -> Ok (Float.of_int i)
-  | j -> Or_error.error_s [%message "expected a number" ~got:(Yojson.Safe.to_string j)]
-;;
-
-let floats_of_json = function
-  | `List l ->
-    List.map l ~f:float_of_json |> Or_error.all |> Or_error.map ~f:Array.of_list
-  | j -> Or_error.error_s [%message "expected a list" ~got:(Yojson.Safe.to_string j)]
-;;
-
 let of_yojson json =
   let open Or_error.Let_syntax in
-  let field k = Yojson.Safe.Util.member k json in
-  match field "kind" with
-  | `String "identity" -> Ok Identity
-  | `String "platt" ->
-    let%bind a = float_of_json (field "a") in
-    let%map b = float_of_json (field "b") in
+  let open Json_util in
+  match%bind field "kind" string json with
+  | "identity" -> Ok Identity
+  | "platt" ->
+    let%bind a = field "a" float json in
+    let%map b = field "b" float json in
     Platt { a; b }
-  | `String "isotonic" ->
-    let%bind x = floats_of_json (field "x") in
-    let%bind y = floats_of_json (field "y") in
+  | "isotonic" ->
+    let%bind x = field "x" (array float) json in
+    let%bind y = field "y" (array float) json in
     isotonic ~x ~y
-  | k ->
-    Or_error.error_s [%message "unknown calibration kind" ~got:(Yojson.Safe.to_string k)]
+  | kind -> Or_error.error_s [%message "unknown calibration kind" kind]
 ;;
 
 let[@zero_alloc] sigmoid_u z =

@@ -65,7 +65,7 @@ let%expect_test "json and stable sexp" =
     {|
     (Platt (a 2) (b -1.5))
     0.500000
-    (Error ("unknown calibration kind" (got "\"spline\"")))
+    (Error ("unknown calibration kind" spline))
     true
     |}]
 ;;
