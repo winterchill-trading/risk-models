@@ -40,6 +40,33 @@ let schema_cmd =
        print_endline (Yojson.Safe.pretty_to_string (Encoding.schema_json ()))))
 ;;
 
+let encode_cmd =
+  Command.basic
+    ~summary:
+      "Read risk-rules Features JSON lines on stdin, print the model vectors as CSV"
+    ~readme:(fun () ->
+      "Each input line is one Risk_rules.Features.to_json record (what `risk-rules \
+       features` prints for a context). Output: a header with the encoding's feature \
+       names, then one row per record; missing values are empty cells. This is the path \
+       from journaled contexts to training rows, so training and serving share \
+       Features.of_context.")
+    (Command.Param.return (fun () ->
+       print_endline (String.concat ~sep:"," (Array.to_list Encoding.schema.features));
+       In_channel.iter_lines In_channel.stdin ~f:(fun line ->
+         if not (String.is_empty (String.strip line))
+         then (
+           match Risk_rules.Features.of_json line with
+           | Error e ->
+             eprint_s [%sexp (e : Error.t)];
+             exit 1
+           | Ok f ->
+             Encoding.encode f
+             |> Array.to_list
+             |> List.map ~f:(fun v -> if Float.is_nan v then "" else sprintf "%.17g" v)
+             |> String.concat ~sep:","
+             |> print_endline))))
+;;
+
 let check_cmd =
   Command.basic
     ~summary:"Load a model, check its schema against risk-rules Features, summarise it"
@@ -104,6 +131,7 @@ let () =
     (Command.group
        ~summary:"Score payments with risk-models exports"
        [ "schema", schema_cmd
+       ; "encode", encode_cmd
        ; "check", check_cmd
        ; "score", score_cmd
        ; "bench", bench_cmd
