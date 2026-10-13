@@ -1,9 +1,9 @@
 (** The ordered list of feature names a model scores.
 
-    The order is the column order of every feature vector. A model file records the
-    schema it was trained on together with a digest (hex MD5 of the names joined by
-    newlines, the same in Python and OCaml); loading checks the digest so a model can
-    never score vectors laid out for another schema. *)
+    The order is the column order of every feature vector. A model file records the schema
+    it was trained on together with a digest (hex MD5 of the names joined by newlines, the
+    same in Python and OCaml); loading checks the digest so a model can never score
+    vectors laid out for another schema. *)
 
 open! Core
 
@@ -27,8 +27,8 @@ val length : t -> int
 val index : t -> string -> int option
 val index_exn : t -> string -> int
 
-(** Fails, naming both digests, unless the two schemas list the same features in the
-    same order. *)
+(** Fails, naming both digests, unless the two schemas list the same features in the same
+    order. *)
 val check_compatible : expected:t -> t -> unit Or_error.t
 
 (** The schema the bundled models were trained on: [python/risk_models_train/schema.py]. *)

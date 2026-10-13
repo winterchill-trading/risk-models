@@ -11,7 +11,8 @@ let%expect_test "create rejects empty and duplicate names" =
   let show r = print_s [%sexp (r : Schema.t Or_error.t)] in
   show (Schema.create ~name:"x" ~version:1 []);
   show (Schema.create ~name:"x" ~version:1 [ "a"; "b"; "a" ]);
-  [%expect {|
+  [%expect
+    {|
     (Error ("a feature schema needs at least one feature" x))
     (Error ("duplicate feature name" x a))
     |}]
@@ -23,7 +24,8 @@ let%expect_test "compatibility is by digest" =
   let c = Schema.create_exn ~name:"a" ~version:1 [ "y"; "x" ] in
   print_s [%sexp (Schema.check_compatible ~expected:a b : unit Or_error.t)];
   print_s [%sexp (Schema.check_compatible ~expected:a c : unit Or_error.t)];
-  [%expect {|
+  [%expect
+    {|
     (Ok ())
     (Error
      ("feature schema mismatch" (expected (a 1 16151ff14c884e2d18c9903202288ba0))
@@ -34,6 +36,7 @@ let%expect_test "compatibility is by digest" =
 let%expect_test "stable sexp round trip re-derives the digest" =
   let s = Schema.txn_features_v1 in
   let back = Schema.Stable.V1.(t_of_sexp (sexp_of_t s)) in
-  print_s [%message (Schema.equal s back : bool) (Schema.index s "new_device" : int option)];
+  print_s
+    [%message (Schema.equal s back : bool) (Schema.index s "new_device" : int option)];
   [%expect {| (("Schema.equal s back" true) ("Schema.index s \"new_device\"" (18))) |}]
 ;;
