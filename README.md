@@ -60,6 +60,7 @@ CLI:
 
 ```sh
 risk-models schema                     # the feature schema as JSON (python/ reads it)
+risk-rules features ctx.sexp | risk-models encode > rows.csv   # contexts to model rows
 risk-models check MODEL.json           # load, check the schema digest, summarise
 risk-models score MODEL.json rows.csv  # score and reasons per CSV row
 risk-models bench MODEL.json rows.csv  # latency and words per call
@@ -96,8 +97,11 @@ No environment variables, credentials or network access are needed.
   top three reasons.
 - The generator mirrors the meaning of each risk-rules field (windows, units, NaN for
   missing) in Python. That is a second implementation of the features and a known
-  source of training/serving skew: the next step is to export training rows from
-  journaled `Context` values through `Features.of_context` itself.
+  source of training/serving skew. For real data the path is already there:
+  `risk-rules features` turns a journaled `Context` into `Features` JSON through
+  `Features.of_context`, and `risk-models encode` turns those lines into CSV rows in
+  model order (a test scores the risk-rules example contexts this way). Joining
+  labels and timestamps to those rows for `train.py` is the missing step.
 
 ## Two rules, shadow first
 
