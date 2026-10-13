@@ -22,8 +22,8 @@ let%expect_test "the bundled model loads with its thresholds and reference histo
     {|
     (txn-fraud-gbdt (trees 150) (nodes 4350)
      (thresholds
-      (((review 0.14468085106382977) (block (0.8)) (alerts_per_day 50)
-        (block_precision 0.9))))
+      (((review 0.11538461538461539) (block (0.68888888888888888))
+        (alerts_per_day 50) (block_precision 0.9))))
      (reference_buckets (11)))
     |}]
 ;;
@@ -40,7 +40,7 @@ let%expect_test "a model for another schema is refused" =
     (("loading model" ../models/txn-fraud-gbdt/model.json)
      ("feature schema mismatch"
       (expected (txn-features 2 7801ce9e8882eade968a767ac65949cc))
-      (got (txn-features 1 4451fa83bbfdc7994f1f4942758d1968))))
+      (got (risk-rules-features 1 405b88b3692809d1dde4e6e214006b69))))
     |}]
 ;;
 
@@ -63,22 +63,28 @@ let%expect_test "explain gives the score with its top reasons" =
   let m = force gbdt in
   let x = Array.create ~len:(Schema.length (Model.schema m)) 0. in
   let set f v = x.(Schema.index_exn (Model.schema m) f) <- v in
-  set "amount_log10" 3.6;
-  set "beneficiary_new" 1.;
+  (* An account-takeover shape: fresh credentials and device, a new payee, most of the
+     balance, out by instant transfer. *)
+  set "amount" 2400.;
+  set "log1p_amount" (Float.log1p 2400.);
+  set "balance" 2600.;
+  set "amount_to_balance" (2400. /. 2600.);
+  set "beneficiary_age_hours" 0.2;
   set "new_device" 1.;
-  set "hours_since_credential_change_log" 1.;
-  set "balance_drain_ratio" 0.9;
-  set "account_age_days_log" 6.;
-  set "hour_cos" 1.;
+  set "hours_since_credentials_change" 1.5;
+  set "failed_sca_24h" 2.;
+  set "account_age_days" 900.;
+  set "hour_of_day_utc" 3.;
+  set "rail_sepa_instant" 1.;
+  set "payee_no_match" 1.;
   let s = Model.explain m x in
   print_s [%sexp (s : Score.t)];
   [%expect
     {|
-    ((model txn-fraud-gbdt) (score 1) (margin 5.24094141700435)
+    ((model txn-fraud-gbdt) (score 1) (margin 9.2043319678682209)
      (reasons
-      (((feature amount_log10) (contribution 6.3287174011466281))
-       ((feature beneficiary_age_days_log) (contribution 1.8865593426218867))
-       ((feature hours_since_credential_change_log)
-        (contribution 1.6860506695347846)))))
+      (((feature beneficiary_age_hours) (contribution 9.3556574735409))
+       ((feature in_sum_24h) (contribution 3.3774508440132225))
+       ((feature hour_of_day_utc) (contribution 2.2342008693066453)))))
     |}]
 ;;

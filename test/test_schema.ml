@@ -1,10 +1,19 @@
 open! Core
 open Risk_models
 
-let%expect_test "digest matches the Python schema" =
-  let s = Schema.txn_features_v1 in
-  print_s [%message (s.digest : string) (Schema.length s : int)];
-  [%expect {| ((s.digest 4451fa83bbfdc7994f1f4942758d1968) ("Schema.length s" 25)) |}]
+let%expect_test "the committed features.json is the encoding's schema" =
+  let s = Encoding.schema in
+  let committed = Yojson.Safe.from_file "../python/risk_models_train/features.json" in
+  print_s
+    [%message
+      (s.digest : string)
+        (Schema.length s : int)
+        ~same_as_committed:(Yojson.Safe.equal committed (Encoding.schema_json ()) : bool)];
+  [%expect
+    {|
+    ((s.digest 405b88b3692809d1dde4e6e214006b69) ("Schema.length s" 44)
+     (same_as_committed true))
+    |}]
 ;;
 
 let%expect_test "create rejects empty and duplicate names" =
@@ -34,7 +43,7 @@ let%expect_test "compatibility is by digest" =
 ;;
 
 let%expect_test "stable sexp round trip re-derives the digest" =
-  let s = Schema.txn_features_v1 in
+  let s = Encoding.schema in
   let back = Schema.Stable.V1.(t_of_sexp (sexp_of_t s)) in
   print_s
     [%message (Schema.equal s back : bool) (Schema.index s "new_device" : int option)];

@@ -4,7 +4,8 @@
  (inline_tests
   (deps
    (glob_files fixtures/*.csv)
-   (source_tree ../models))
+   (source_tree ../models)
+   ../python/risk_models_train/features.json)
   (flags
    (:standard -source-tree-root .)))
  (preprocess

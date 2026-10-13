@@ -55,9 +55,9 @@ let%expect_test "OCaml scores equal the Python reference within 1e-9" =
   check "txn-fraud-logistic";
   [%expect
     {|
-    (txn-fraud-gbdt (rows 1000) (rows_with_nan 20) (within_1e_9 true)
+    (txn-fraud-gbdt (rows 1000) (rows_with_nan 1000) (within_1e_9 true)
      (reason_mismatches 0))
-    (txn-fraud-logistic (rows 1000) (rows_with_nan 0) (within_1e_9 true)
+    (txn-fraud-logistic (rows 1000) (rows_with_nan 1000) (within_1e_9 true)
      (reason_mismatches 0))
     |}]
 ;;
