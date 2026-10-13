@@ -1,23 +1,23 @@
 open! Core
 open Risk_models
 
-let gbdt = lazy (Model.load "../models/txn-fraud-gbdt/model.json" |> Or_error.ok_exn)
+let gbdt = lazy (Scorer.load "../models/txn-fraud-gbdt/model.json" |> Or_error.ok_exn)
 
 let%expect_test "the bundled model loads with its thresholds and reference histogram" =
   let m = force gbdt in
   let trees, nodes =
-    match Model.body m with
+    match Scorer.body m with
     | Forest f -> Forest.n_trees f, Forest.n_nodes f
     | Linear _ -> 0, 0
   in
   print_s
     [%message
-      (Model.name m)
+      (Scorer.name m)
         (trees : int)
         (nodes : int)
-        ~thresholds:(Model.thresholds m : Model.Thresholds.t option)
+        ~thresholds:(Scorer.thresholds m : Scorer.Thresholds.t option)
         ~reference_buckets:
-          (Option.map (Model.reference m) ~f:(fun (_, c) -> Array.length c) : int option)];
+          (Option.map (Scorer.reference m) ~f:(fun (_, c) -> Array.length c) : int option)];
   [%expect
     {|
     (txn-fraud-gbdt (trees 150) (nodes 4350)
@@ -32,7 +32,7 @@ let%expect_test "a model for another schema is refused" =
   let other =
     Schema.create_exn ~name:"txn-features" ~version:2 [ "amount_log10"; "hour_sin" ]
   in
-  (match Model.load ~expected:other "../models/txn-fraud-gbdt/model.json" with
+  (match Scorer.load ~expected:other "../models/txn-fraud-gbdt/model.json" with
    | Ok _ -> print_endline "loaded"
    | Error e -> print_s [%sexp (e : Error.t)]);
   [%expect
@@ -46,7 +46,7 @@ let%expect_test "a model for another schema is refused" =
 
 let%expect_test "malformed files name the failing field" =
   let show s =
-    match Model.of_yojson (Yojson.Safe.from_string s) with
+    match Scorer.of_yojson (Yojson.Safe.from_string s) with
     | Ok _ -> print_endline "ok"
     | Error e -> print_s [%sexp (e : Error.t)]
   in
@@ -61,8 +61,8 @@ let%expect_test "malformed files name the failing field" =
 
 let%expect_test "explain gives the score with its top reasons" =
   let m = force gbdt in
-  let x = Array.create ~len:(Schema.length (Model.schema m)) 0. in
-  let set f v = x.(Schema.index_exn (Model.schema m) f) <- v in
+  let x = Array.create ~len:(Schema.length (Scorer.schema m)) 0. in
+  let set f v = x.(Schema.index_exn (Scorer.schema m) f) <- v in
   (* An account-takeover shape: fresh credentials and device, a new payee, most of the
      balance, out by instant transfer. *)
   set "amount" 2400.;
@@ -77,14 +77,13 @@ let%expect_test "explain gives the score with its top reasons" =
   set "hour_of_day_utc" 3.;
   set "rail_sepa_instant" 1.;
   set "payee_no_match" 1.;
-  let s = Model.explain m x in
-  print_s [%sexp (s : Score.t)];
+  let s = Scorer.explain m x in
+  print_s [%sexp (s : Risk_rules.Model.Score.t)];
   [%expect
     {|
-    ((model txn-fraud-gbdt) (score 1) (margin 9.2043319678682209)
+    ((value 1)
      (reasons
-      (((feature beneficiary_age_hours) (contribution 9.3556574735409))
-       ((feature in_sum_24h) (contribution 3.3774508440132225))
-       ((feature hour_of_day_utc) (contribution 2.2342008693066453)))))
+      ((beneficiary_age_hours 9.3556574735409) (in_sum_24h 3.3774508440132225)
+       (hour_of_day_utc 2.2342008693066453))))
     |}]
 ;;

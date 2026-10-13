@@ -59,7 +59,7 @@ let%expect_test "validation" =
 ;;
 
 let%expect_test "the bundled model's reference against its parity fixture" =
-  let model = Model.load "../models/txn-fraud-gbdt/model.json" |> Or_error.ok_exn in
+  let model = Scorer.load "../models/txn-fraud-gbdt/model.json" |> Or_error.ok_exn in
   let m = Option.value_exn (Monitor.of_model model) in
   In_channel.read_lines "fixtures/txn-fraud-gbdt.parity.csv"
   |> List.tl_exn
@@ -76,13 +76,13 @@ let%expect_test "the bundled model's reference against its parity fixture" =
 ;;
 
 let%expect_test "scoring into the monitor allocates nothing" =
-  let model = Model.load "../models/txn-fraud-gbdt/model.json" |> Or_error.ok_exn in
+  let model = Scorer.load "../models/txn-fraud-gbdt/model.json" |> Or_error.ok_exn in
   let m = Option.value_exn (Monitor.of_model model) in
-  let x = Array.create ~len:(Schema.length (Model.schema model)) 0. in
+  let x = Array.create ~len:(Schema.length (Scorer.schema model)) 0. in
   let before = Gc.minor_words () in
   for i = 0 to 999 do
     x.(0) <- Float.of_int i;
-    Monitor.observe_u m (Model.score_u model x)
+    Monitor.observe_u m (Scorer.score_u model x)
   done;
   print_s [%message (Gc.minor_words () - before : int)];
   [%expect {| ("(Gc.minor_words ()) - before" 0) |}]

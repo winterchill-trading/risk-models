@@ -17,11 +17,11 @@ type t
 val create : ?reference:int array -> edges:float array -> unit -> t Or_error.t
 
 (** Buckets and reference from the model file; [None] when it has no reference. *)
-val of_model : Model.t -> t option
+val of_model : Scorer.t -> t option
 
 val observe : t -> float -> unit [@@zero_alloc]
 
-(** [observe] taking the unboxed score [Model.score_u] returns; a boxed [float] argument
+(** [observe] taking the unboxed score [Scorer.score_u] returns; a boxed [float] argument
     costs the caller two words per call when [observe] is not inlined. *)
 val observe_u : t -> float# -> unit
 [@@zero_alloc]

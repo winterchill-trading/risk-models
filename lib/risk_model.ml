@@ -3,23 +3,16 @@ module Rr = Risk_rules
 
 let to_risk_rules model =
   let module M = struct
-    let name = Model.name model
-    let version = Model.version model
-
-    let score features =
-      let s = Model.explain model (Encoding.encode features) in
-      Rr.Model.Score.create
-        ~value:s.score
-        ~reasons:(List.map s.reasons ~f:(fun r -> r.feature, r.contribution))
-      |> Or_error.ok_exn
-    ;;
+    let name = Scorer.name model
+    let version = Scorer.version model
+    let score features = Scorer.explain model (Encoding.encode features)
   end
   in
   (module M : Rr.Model.S)
 ;;
 
 let review_thresholds model =
-  Option.map (Model.thresholds model) ~f:(fun t ->
+  Option.map (Scorer.thresholds model) ~f:(fun t ->
     { Rr.Rules.Thresholds.challenge_at = None
     ; review_at = Some t.review
     ; block_at = None
@@ -27,7 +20,7 @@ let review_thresholds model =
 ;;
 
 let block_thresholds model =
-  Option.bind (Model.thresholds model) ~f:(fun t ->
+  Option.bind (Scorer.thresholds model) ~f:(fun t ->
     Option.map t.block ~f:(fun block ->
       { Rr.Rules.Thresholds.challenge_at = None; review_at = None; block_at = Some block }))
 ;;
@@ -50,6 +43,6 @@ let rules ?(shadow = true) model =
 
 let rule_specs ?(shadow = true) model =
   List.map (named model) ~f:(fun (_, _, thresholds) ->
-    let spec = Rr.Rule_spec.Score { model = Model.name model; thresholds } in
+    let spec = Rr.Rule_spec.Score { model = Scorer.name model; thresholds } in
     if shadow then Rr.Rule_spec.Shadow spec else spec)
 ;;

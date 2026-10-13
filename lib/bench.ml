@@ -48,7 +48,7 @@ let score model rows ~calls =
   (* A float array slot stores the score unboxed; a [float ref] would box it. *)
   let sink = [| 0. |] in
   let r =
-    run rows ~calls ~f:(fun x -> sink.(0) <- Float_u.to_float (Model.score_u model x))
+    run rows ~calls ~f:(fun x -> sink.(0) <- Float_u.to_float (Scorer.score_u model x))
   in
   ignore (Sys.opaque_identity sink : float array);
   r
@@ -56,5 +56,5 @@ let score model rows ~calls =
 
 let explain model rows ~calls =
   run rows ~calls ~f:(fun x ->
-    ignore (Sys.opaque_identity (Model.explain model x) : Score.t))
+    ignore (Sys.opaque_identity (Scorer.explain model x) : Risk_rules.Model.Score.t))
 ;;

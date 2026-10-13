@@ -1,6 +1,6 @@
 (** Scoring latency, for the CLI and the README numbers.
 
-    Times [Model.score_u] (calibrated score, no reasons) and [Model.explain] (score with
+    Times [Scorer.score_u] (calibrated score, no reasons) and [Scorer.explain] (score with
     three reasons, allocating) over the given rows, round-robin. Per-call times come from
     [Time_ns.now] around each call, so they include its overhead (tens of nanoseconds);
     the mean comes from one timer around the whole loop. *)
@@ -16,5 +16,5 @@ type result =
   }
 [@@deriving sexp_of]
 
-val score : Model.t -> float array array -> calls:int -> result
-val explain : Model.t -> float array array -> calls:int -> result
+val score : Scorer.t -> float array array -> calls:int -> result
+val explain : Scorer.t -> float array array -> calls:int -> result

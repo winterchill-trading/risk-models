@@ -5,7 +5,7 @@ let model_arg = Command.Param.(anon ("MODEL" %: Filename_unix.arg_type))
 let csv_arg = Command.Param.(anon ("CSV" %: Filename_unix.arg_type))
 
 let load path =
-  match Model.load path with
+  match Scorer.load path with
   | Ok m -> m
   | Error e ->
     eprint_s [%sexp (e : Error.t)];
@@ -16,7 +16,7 @@ let load path =
    missing columns and empty cells are NaN. Extra columns (labels, expected scores) are
    ignored. *)
 let read_rows model path =
-  let schema = Model.schema model in
+  let schema = Scorer.schema model in
   match In_channel.read_lines path with
   | [] -> [||]
   | header :: lines ->
@@ -47,18 +47,18 @@ let check_cmd =
      fun () ->
        let m = load path in
        let kind =
-         match Model.body m with
+         match Scorer.body m with
          | Forest f ->
            sprintf "gbdt, %d trees, %d nodes" (Forest.n_trees f) (Forest.n_nodes f)
          | Linear _ -> "logistic"
        in
        print_s
          [%message
-           (Model.name m)
-             ~version:(Model.version m : string)
+           (Scorer.name m)
+             ~version:(Scorer.version m : string)
              (kind : string)
-             ~schema:((Model.schema m).digest : string)
-             ~thresholds:(Model.thresholds m : Model.Thresholds.t option)])
+             ~schema:((Scorer.schema m).digest : string)
+             ~thresholds:(Scorer.thresholds m : Scorer.Thresholds.t option)])
 ;;
 
 let score_cmd =
@@ -69,13 +69,13 @@ let score_cmd =
      fun () ->
        let m = load path in
        Array.iter (read_rows m csv) ~f:(fun x ->
-         let s = Model.explain m x in
+         let s = Scorer.explain m x in
          printf
            "%.6f\t%s\n"
-           s.score
+           s.value
            (String.concat
               ~sep:" "
-              (List.map s.reasons ~f:(fun r -> sprintf "%s:%.3f" r.feature r.contribution)))))
+              (List.map s.reasons ~f:(fun (f, c) -> sprintf "%s:%.3f" f c)))))
 ;;
 
 let bench_cmd =
@@ -94,7 +94,7 @@ let bench_cmd =
        let rows = read_rows m csv in
        print_s
          [%message
-           (Model.name m)
+           (Scorer.name m)
              ~score:(Bench.score m rows ~calls : Bench.result)
              ~explain:(Bench.explain m rows ~calls:(calls / 10) : Bench.result)])
 ;;

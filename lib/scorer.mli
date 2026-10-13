@@ -72,5 +72,6 @@ val score : t -> float array -> float
 val contributions_u : t -> float array -> into:float array -> float#
 [@@zero_alloc]
 
-(** Score with the top [k] (default 3) reasons. Allocates. *)
-val explain : ?k:int -> t -> float array -> Score.t
+(** Calibrated score with the top [k] (default 3) reasons, as risk-rules' score: feature
+    names with their contribution to the log-odds, largest first. Allocates. *)
+val explain : ?k:int -> t -> float array -> Risk_rules.Model.Score.t

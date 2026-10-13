@@ -2,7 +2,7 @@ open! Core
 open Risk_models
 module Features = Risk_rules.Features
 
-let model = lazy (Model.load "../models/txn-fraud-gbdt/model.json" |> Or_error.ok_exn)
+let model = lazy (Scorer.load "../models/txn-fraud-gbdt/model.json" |> Or_error.ok_exn)
 
 (* A takeover-shaped instant transfer: new device, credentials changed an hour and a half
    ago, a payee first used minutes ago whose name did not match, most of the balance. *)
@@ -90,7 +90,7 @@ let%expect_test "encoding lays out to_floats then the one-hot columns" =
     |}]
 ;;
 
-let%expect_test "the model through risk-rules' Model.S" =
+let%expect_test "the model through risk-rules' Scorer.S" =
   let rr = Risk_model.to_risk_rules (force model) in
   List.iter
     [ "takeover", takeover; "groceries", groceries ]

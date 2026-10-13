@@ -23,7 +23,7 @@ let create ?reference ~edges () =
 ;;
 
 let of_model model =
-  Option.map (Model.reference model) ~f:(fun (edges, reference) ->
+  Option.map (Scorer.reference model) ~f:(fun (edges, reference) ->
     create ~reference ~edges () |> Or_error.ok_exn)
 ;;
 

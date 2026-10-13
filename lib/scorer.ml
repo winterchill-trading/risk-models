@@ -101,6 +101,9 @@ let of_yojson ?(expected = Encoding.schema) json =
     match%bind field "kind" string json with
     | "gbdt" ->
       field "gbdt" (Forest.of_yojson ~n_features) json >>| fun f -> Body.Forest f
+    | "lightgbm" ->
+      field "lightgbm" (Lightgbm_dump.of_yojson ~n_features) json
+      >>| fun f -> Body.Forest f
     | "logistic" ->
       field "logistic" (Linear.of_yojson ~n_features) json >>| fun l -> Body.Linear l
     | kind -> Or_error.error_s [%message "unknown model kind" kind]
@@ -165,13 +168,27 @@ let[@zero_alloc] contributions_u t x ~into =
   | Linear l -> Linear.contributions_u l x ~into
 ;;
 
+(* The k largest positive contributions, largest first, ties by feature index (the Python
+   reference scorer's order). *)
+let top_reasons ~names contributions ~k =
+  Array.filter_mapi contributions ~f:(fun i c -> Option.some_if Float.(c > 0.) (c, i))
+  |> Array.to_list
+  |> List.sort ~compare:(fun (c1, i1) (c2, i2) ->
+    match Float.compare c2 c1 with
+    | 0 -> Int.compare i1 i2
+    | n -> n)
+  |> (fun l -> List.take l k)
+  |> List.map ~f:(fun (c, i) -> names.(i), c)
+;;
+
 let explain ?(k = 3) t x =
   let into = Array.create ~len:(Schema.length t.schema) 0. in
   let margin = Float_u.to_float (contributions_u t x ~into) in
-  let probability = Calibration.sigmoid margin in
-  { Score.model = t.name
-  ; score = Calibration.apply t.calibration probability
-  ; margin
-  ; reasons = Score.top_reasons ~names:t.schema.features into ~k
-  }
+  let value = Calibration.apply t.calibration (Calibration.sigmoid margin) in
+  (* Cannot fail: calibrated scores are in [0, 1] and contributions are finite for the
+     validated models this module loads. *)
+  Risk_rules.Model.Score.create
+    ~value
+    ~reasons:(top_reasons ~names:t.schema.features into ~k)
+  |> Or_error.ok_exn
 ;;
