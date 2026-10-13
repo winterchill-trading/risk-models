@@ -1,0 +1,38 @@
+name: nightly-training
+# The full Python pipeline (generate, train, evaluate, export) takes about a minute,
+# so it runs nightly and on demand rather than on every push. It checks that training
+# still works end to end and that the reference scorer agrees with scikit-learn
+# (export.py asserts it); the committed models are only replaced by a person.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked
+      - run: uv run python generate.py
+      - run: uv run python train.py
+      - run: uv run python evaluate.py --models ../out/models
+      - run: uv run python export.py --models ../out/models --fixtures ../out/fixtures
+      - name: average precision floor
+        run: |
+          uv run python - <<'PY'
+          import json
+          m = json.load(open("../out/models/txn-fraud-gbdt/metrics.json"))
+          print("average precision", m["pr_auc"])
+          assert m["pr_auc"] > 0.4, "gradient-boosted model fell below the floor"
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: models
+          path: out/
