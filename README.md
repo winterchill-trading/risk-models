@@ -51,6 +51,16 @@ let decide features =
   let s = Scorer.explain model x in    (* Risk_rules.Model.Score.t, top 3 reasons *)
   p, s.reasons
 
+(* Exact per-feature contributions for a reviewer: base + contributions = margin. *)
+let explainer = Explainer.create model |> Or_error.ok_exn   (* one per thread *)
+let why features =
+  Explainer.explain ~k:5 explainer (Encoding.encode features)
+  |> Explanation.to_json_string        (* stable JSON, format 1 *)
+
+(* Abstain near the threshold: predict only when the score is far enough from it. *)
+let abstain = Abstain.create ~threshold:0.01 ~confidence:Logit_margin ~min_confidence:0.5
+let decide_or_defer score = Abstain.decide (Or_error.ok_exn abstain) score
+
 (* Or hand the model to risk-rules: two rules, capped at Allow until promoted. *)
 let rules = Risk_model.rules ~shadow:true model     (* model_review, model_block *)
 let specs = Risk_model.rule_specs model             (* the same as policy sexp *)
@@ -63,6 +73,10 @@ risk-models schema                     # the feature schema as JSON (python/ rea
 risk-rules features ctx.sexp | risk-models encode > rows.csv   # contexts to model rows
 risk-models check MODEL.json           # load, check the schema digest, summarise
 risk-models score MODEL.json rows.csv  # score and reasons per CSV row
+risk-models explain -model MODEL.json -features amount=1200,beneficiary_age_hours=2
+                                       # explanation JSON: base, margin, top k, rest
+risk-models explain -model MODEL.json -csv rows.csv -background bg.csv -k 3
+                                       # interventional, against background rows
 risk-models bench MODEL.json rows.csv  # latency and words per call
 ```
 
@@ -79,6 +93,10 @@ No environment variables, credentials or network access are needed.
 | `Calibration` | isotonic (numpy `interp` semantics), Platt or identity; `apply_u` is `[@zero_alloc]` |
 | `Lightgbm_dump` | reads LightGBM `Booster.dump_model()` JSON into a `Forest` (binary objective, numerical splits, `missing_type` NaN/None/Zero) |
 | `Scorer` | loads `model.json`, refuses a schema digest mismatch; margin, probability, calibrated score, `explain` returning a `Risk_rules.Model.Score.t` |
+| `Tree_shap` | exact additive per-feature attributions for a `Forest`: path-dependent (from the node covers, tabulated per leaf, `[@zero_alloc]`) and interventional (against a background sample, `[@zero_alloc]`) |
+| `Explanation` | a compact explanation: base, margin, score, top k contributions with reviewer-facing labels, the rest summed; `Stable.V1` bin_io and a stable JSON form |
+| `Explainer` | attributions and explanations for a `Scorer` (trees, or the logistic model's weighted terms) or for any bare `Forest` with feature names |
+| `Abstain` | selective classification: predict or abstain by distance from the threshold, accuracy-coverage curves from labelled scores, the cut-off for a target coverage |
 | `Risk_model` | `Risk_rules.Model.S` adapter, `model_review` and `model_block` rules, shadow mode, policy specs |
 | `Monitor` | live score histogram, PSI against the calibration window, Stable/Review/Retrain, Prometheus text |
 | `Bench` | scoring latency and allocation |
@@ -129,6 +147,8 @@ counts near the budget.
   `weights`, `mean`, `scale`, `log1p`)
 - `calibration`: isotonic knots
 - `reference`: score histogram on the calibration window, for `Monitor`
+- in `gbdt` trees, `count`: training rows per node (optional; path-dependent attributions
+  need it, LightGBM dumps carry their own counts)
 - `thresholds`: review and block, with the budget and precision target they were chosen for
 
 Tree semantics follow scikit-learn: `x <= threshold` goes left, NaN follows
@@ -137,6 +157,65 @@ node `value`s are count-weighted subtree means, used only for reason codes (path
 attribution: each split credits the change in expected value to its feature, so bias
 plus contributions equals the margin exactly). A threshold of +inf (missing versus
 present) is written as the largest finite double.
+
+## Explanations
+
+`Tree_shap` computes the exact Shapley values of the tree ensemble's margin: one
+contribution per feature, adding up with the base value to the margin
+(`base + sum = margin`, checked on every fixture row). Two definitions are offered, and
+they differ when features are correlated:
+
+- path-dependent (default): features outside a subset follow the training data down each
+  tree in proportion to the node covers, so the base is the cover-weighted mean margin.
+  This is the exact tree-path algorithm (TreeSHAP-style). Its per-leaf results depend on
+  the row only through which of the leaf's path features the row follows, so the
+  workspace tabulates every leaf with at most 10 distinct path features for all such
+  patterns (4.2 MB for the 150-tree model) and computes deeper leaves at run time by an
+  exact Gauss-Legendre quadrature of the Shapley integral. Trees may have up to 63 leaves.
+- interventional: features outside a subset take their values from each row of a
+  background sample; the base is the background's mean margin. Cost grows with the sample.
+
+`Explanation.t` keeps the top k (default 5) by absolute contribution, with
+reviewer-facing labels, plus the sum of the rest. These are model contributions to the
+log-odds, not causes. The JSON form (format 1) has a fixed field order and `null` for a
+missing feature value:
+
+```json
+{"format":1,"model":"txn-fraud-gbdt","version":"66c8ce496731","method":"path_dependent",
+ "base":-9.6926,"margin":-3.3673,"score":0.0935,
+ "top":[{"feature":"beneficiary_age_hours","label":"beneficiary_age_hours","value":2.0,
+         "contribution":3.0265}, ...],
+ "rest":-0.7079}
+```
+
+The existing reason codes (`Scorer.explain`, `Risk_model`) are unchanged: they are path
+attributions, cheaper and stable, and the parity tests pin them.
+
+Parity: `python/export.py` writes `test/fixtures/<model>.shap.csv` from the shap library's
+`TreeExplainer` (0.53) on the exported JSON trees (scikit-learn) or the booster
+(LightGBM). The OCaml values match:
+
+| | path-dependent (200 rows) | interventional (50 rows, 100 background) |
+|---|---|---|
+| scikit-learn trees | 3.6e-15 | 8.5e-8 |
+| LightGBM | 1.8e-15 | 4.6e-7 |
+
+shap's interventional code adds in single precision (a leaf of 1 + 1e-12 comes back as
+exactly 1), which is the whole difference there; the test bounds are 1e-12 and 1e-6. Its
+interventional values also stop adding up for rows with a value exactly on a split
+threshold, so the export leaves those rows out of that part. Independently of shap, a
+test enumerates every feature subset of 200 random small forests (with missing values,
+repeated features and values on thresholds) and checks both variants against the
+Shapley formula to 1e-12.
+
+## Abstaining
+
+`Abstain` wraps a thresholded decision: with confidence the distance of the score from
+the threshold (in log-odds or in probability), scores closer than `min_confidence`
+abstain. `Abstain.Curve.compute` gives, from labelled scores, accuracy, precision and
+recall at every coverage; `for_coverage` picks `min_confidence` for a target coverage,
+and `band` gives the abstaining scores as an interval. In a decision system the abstain
+band is a review queue or a fallback to rules; transaction-monitoring uses it both ways.
 
 ## Results on the synthetic set
 
@@ -164,11 +243,20 @@ cards (`models/*/CARD.md`) have the full tables, cost figures and drift checks.
 
 On an Apple M-series laptop, release build, rows from the parity fixture:
 
-| | `Scorer.score_u` | `Scorer.explain` |
-|---|---|---|
-| scikit-learn trees (150 trees, 4350 nodes) | 2.1 us, 0 words | 3.4 us, 480 words |
-| LightGBM (150 trees, 4350 nodes) | 2.5 us, 0 words | 3.8 us, 520 words |
-| Logistic | 0.18 us, 0 words | 0.67 us, 574 words |
+| | `Scorer.score_u` | `Scorer.explain` | attributions (`Explainer.contributions_u`) | `Explainer.explain` (top 5) | interventional, 100 background rows |
+|---|---|---|---|---|---|
+| scikit-learn trees (150 trees, 4350 nodes) | 2.1 us, 0 words | 3.4 us, 480 words | 32 us, 0 words | 34 us, 666 words | 0.96 ms, 0 words |
+| LightGBM (150 trees, 4350 nodes) | 2.5 us, 0 words | 3.8 us, 520 words | 32 us, 0 words | 34 us, 668 words | 0.93 ms, 0 words |
+| Logistic | 0.18 us, 0 words | 0.67 us, 574 words | 0.13 us, 0 words | 2.0 us, 687 words | |
+
+The attribution numbers were measured with the machine under load from other builds
+(the score column read 2.8 us in the same run). Path-dependent attributions started at
+170 us with the textbook node-by-node walk; tabulating leaves took them to about 30 us,
+which is now the cost of adding about 9 400 table entries per row (four per leaf), short
+of the few microseconds the scores take. They are meant for decisions a person reviews,
+not for every payment. The transaction-monitoring model (102 trees, leaves with up to 14
+distinct features) takes about 65 us with a 27 MB table, or 90 us with
+`~max_table_depth:8` and 8.5 MB.
 
 Per-call percentiles from `risk-models bench` are quantised to 1 us by the macOS clock.
 Scoring and feeding the score into `Monitor.observe_u` allocates nothing (an
@@ -202,4 +290,8 @@ replaces the committed models.
   (strict less-than splits compared in float32) is not written yet. The LightGBM
   parity fixture has extra missing values but no rows placed exactly on split
   thresholds (the scikit-learn one has 40).
-- Reason codes are path attributions, not TreeSHAP.
+- Reason codes (`Scorer.explain`, the risk-rules rules) are still path attributions;
+  exact attributions are a separate call (`Explainer`) at about ten times the cost of a
+  score.
+- Path-dependent attributions need trees of at most 63 leaves and the node counts in the
+  export (older exports without them only explain interventionally).
