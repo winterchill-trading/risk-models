@@ -3,10 +3,13 @@
 Format (format = 1):
   name, kind ("gbdt" | "logistic"), link ("logistic"),
   schema      {name, version, features, digest}
-  gbdt        {base_score, trees: [{feature, threshold, missing_left, left, right, value}]}
+  gbdt        {base_score, trees: [{feature, threshold, missing_left, left, right, value,
+              count}]}
               feature = -1 marks a leaf; value is the leaf value at leaves and the
               count-weighted expected value of the subtree at split nodes (used for
-              reason codes only; the score sums leaf values)
+              reason codes only; the score sums leaf values); count is the number of
+              training rows reaching the node (the cover path-dependent attributions
+              weigh by; optional for the OCaml loader)
   lightgbm    Booster.dump_model() as LightGBM writes it (binary objective, numerical
               splits only); OCaml flattens it into the same arrays as gbdt
   logistic    {intercept, weights, mean, scale, log1p}: x' = log1p(max(x, 0)) where log1p
@@ -22,6 +25,11 @@ Format (format = 1):
 Before writing, the reference scorer (risk_models_train/scorer.py) must agree with
 scikit-learn's own predictions on the test window; the parity fixture then records
 1000 rows with the reference scorer's outputs for the OCaml tests.
+
+For the tree models, a second fixture (<name>.shap.csv) records per-feature attributions
+from the shap library's TreeExplainer: path-dependent for the first 200 parity rows, and
+interventional for the first 50 against the last 100 rows as background. The OCaml
+Tree_shap module must reproduce them.
 
 Usage: uv run python export.py [--data data/synthetic.npz] [--trained data/trained.pkl]
 """
@@ -69,7 +77,8 @@ def export_tree(pred):
     return dict(
         feature=feature.tolist(), threshold=threshold.tolist(),
         missing_left=nodes["missing_go_to_left"].astype(int).tolist(),
-        left=left.tolist(), right=right.tolist(), value=value.tolist())
+        left=left.tolist(), right=right.tolist(), value=value.tolist(),
+        count=count.tolist())
 
 
 LGBM_KEEP = {"split_feature", "threshold", "decision_type", "default_left", "missing_type",
@@ -183,6 +192,60 @@ def write_fixture(path, model, X):
                                                       ";".join(map(str, rs))])
 
 
+SHAP_PATH_ROWS, SHAP_INTERVENTIONAL_ROWS, SHAP_BACKGROUND = 200, 50, 100
+
+
+def shap_model(model, entry):
+    """What TreeExplainer reads: the exported trees themselves for scikit-learn (so the
+    fixture checks the JSON, not the pickle), the booster for LightGBM, whose missing-value
+    modes the custom-tree format cannot express."""
+    if model["kind"] == "lightgbm":
+        return entry["lgbm"].booster_
+    trees = []
+    for t in model["gbdt"]["trees"]:
+        left, right = np.array(t["left"]), np.array(t["right"])
+        trees.append(dict(
+            children_left=left, children_right=right,
+            children_default=np.where(np.array(t["missing_left"]) == 1, left, right),
+            features=np.array(t["feature"]), thresholds=np.array(t["threshold"]),
+            values=np.array(t["value"]).reshape(-1, 1),
+            node_sample_weight=np.array(t["count"], dtype=np.float64)))
+    return dict(trees=trees, base_offset=model["gbdt"]["base_score"],
+                tree_output="raw_value", input_dtype=np.float64, internal_dtype=np.float64)
+
+
+def write_shap_fixture(path, model, entry, X):
+    import shap  # only the export needs it
+
+    m = shap_model(model, entry)
+    rows = []
+    e = shap.TreeExplainer(m, feature_perturbation="tree_path_dependent")
+    phi = e.shap_values(X[:SHAP_PATH_ROWS])
+    base = float(np.ravel(e.expected_value)[0])
+    rows += [("path", i, base, phi[i]) for i in range(SHAP_PATH_ROWS)]
+    bg = X[-SHAP_BACKGROUND:]
+    e = shap.TreeExplainer(m, data=bg, feature_perturbation="interventional")
+    # shap's interventional code adds in single precision (a leaf of 1 + 1e-12 comes back
+    # as exactly 1), so its values add up to the margin only within about 1e-3 here; the
+    # OCaml test compares against them with a matching tolerance.
+    phi = e.shap_values(X[:SHAP_INTERVENTIONAL_ROWS], check_additivity=False)
+    base = float(np.ravel(e.expected_value)[0])
+    rows += [("interventional", i, base, phi[i]) for i in range(SHAP_INTERVENTIONAL_ROWS)]
+    # Additivity, so a fixture that disagrees with the scorer never gets written.
+    worst = {"path": 0.0, "interventional": 0.0}
+    for method, i, b, p in rows:
+        mg, _, _, _ = scorer.score(model, X[i].tolist())
+        worst[method] = max(worst[method], abs(b + float(np.sum(p)) - mg))
+    assert worst["path"] < 1e-9, f"path-dependent values do not add up: {worst}"
+    assert worst["interventional"] < 1e-2, f"interventional values do not add up: {worst}"
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f, lineterminator="\n")
+        w.writerow(["method", "row", "base"] + schema.FEATURES)
+        for method, i, b, p in rows:
+            w.writerow([method, i, repr(b)] + [repr(float(v)) for v in p])
+    return worst
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--data", default="data/synthetic.npz")
@@ -208,6 +271,11 @@ def main():
             json.dump(model, f, allow_nan=False, separators=(",", ":"))
             f.write("\n")
         write_fixture(os.path.join(a.fixtures, f"{name}.parity.csv"), model, X)
+        if model["kind"] in ("gbdt", "lightgbm"):
+            additivity = write_shap_fixture(
+                os.path.join(a.fixtures, f"{name}.shap.csv"), model, entry, X)
+            print(f"{name}: shap fixture, additivity path {additivity['path']:.1e}, "
+                  f"interventional {additivity['interventional']:.1e}")
         size = os.path.getsize(os.path.join(out, "model.json"))
         print(f"{name}: {size // 1024} KB, reference vs scikit-learn max diff {worst:.2e}")
 
