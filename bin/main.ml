@@ -119,11 +119,90 @@ let bench_cmd =
      fun () ->
        let m = load path in
        let rows = read_rows m csv in
+       let ok = Or_error.ok_exn in
+       let path_dependent = Explainer.create m |> Or_error.ok in
+       (* Interventional cost grows with the background, so it runs fewer calls. *)
+       let background = Array.sub rows ~pos:0 ~len:(Int.min 100 (Array.length rows)) in
+       let interventional = Explainer.create ~background m |> ok in
        print_s
          [%message
            (Scorer.name m)
              ~score:(Bench.score m rows ~calls : Bench.result)
-             ~explain:(Bench.explain m rows ~calls:(calls / 10) : Bench.result)])
+             ~explain:(Bench.explain m rows ~calls:(calls / 10) : Bench.result)
+             ~attribute:
+               (Option.map path_dependent ~f:(fun e ->
+                  ( Explanation.Method.to_string (Explainer.method_ e)
+                  , Bench.attribute e rows ~calls:(calls / 10) ))
+                : (string * Bench.result) option)
+             ~explanation:
+               (Option.map path_dependent ~f:(fun e ->
+                  Bench.explanation e rows ~calls:(calls / 10))
+                : Bench.result option)
+             ~interventional:
+               (Bench.attribute interventional rows ~calls:(Int.max 1 (calls / 1000))
+                : Bench.result)
+             ~background_rows:(Array.length background : int)])
+;;
+
+(* "amount=1200,mcc=5999": features named in the model's schema; the rest are missing. *)
+let parse_features m spec =
+  let schema = Scorer.schema m in
+  let x = Array.create ~len:(Schema.length schema) Float.nan in
+  String.split spec ~on:','
+  |> List.filter ~f:(fun s -> not (String.is_empty (String.strip s)))
+  |> List.iter ~f:(fun kv ->
+    match String.lsplit2 kv ~on:'=' with
+    | None -> failwithf "expected name=value, got %S" kv ()
+    | Some (name, v) ->
+      let name = String.strip name in
+      (match Schema.index schema name with
+       | None -> failwithf "unknown feature %S (see risk-models schema)" name ()
+       | Some i ->
+         x.(i)
+         <- (match String.strip v with
+             | "" | "nan" | "NaN" -> Float.nan
+             | v -> Float.of_string v)));
+  x
+;;
+
+let explain_cmd =
+  Command.basic
+    ~summary:"Explain a score: base value, exact per-feature contributions, top k"
+    ~readme:(fun () ->
+      "Prints one Explanation JSON line (format 1) per row: the base value, the \
+       margin,        the calibrated score, the k features with the largest \
+       contributions to the        log-odds and the sum of the rest; base + \
+       contributions = margin. Trees use        path-dependent attributions (the \
+       training covers in the export), or        interventional ones against -background \
+       rows. These are model contributions, not        causes.")
+    (let%map_open.Command path =
+       flag "-model" (required Filename_unix.arg_type) ~doc:"FILE model.json"
+     and features =
+       flag
+         "-features"
+         (optional string)
+         ~doc:"NAME=VALUE,... one row; unnamed features are missing"
+     and csv =
+       flag "-csv" (optional Filename_unix.arg_type) ~doc:"FILE rows to explain (CSV)"
+     and background =
+       flag
+         "-background"
+         (optional Filename_unix.arg_type)
+         ~doc:"FILE background rows (CSV) for interventional attributions"
+     and k = flag "-k" (optional_with_default 5 int) ~doc:"N features to list (5)" in
+     fun () ->
+       let m = load path in
+       let rows =
+         Option.to_list (Option.map features ~f:(parse_features m))
+         @ Option.value_map csv ~default:[] ~f:(fun f -> Array.to_list (read_rows m f))
+       in
+       if List.is_empty rows then failwith "give -features or -csv";
+       let explainer =
+         Explainer.create ?background:(Option.map background ~f:(read_rows m)) m
+         |> Or_error.ok_exn
+       in
+       List.iter rows ~f:(fun x ->
+         print_endline (Explanation.to_json_string (Explainer.explain ~k explainer x))))
 ;;
 
 let () =
@@ -134,6 +213,7 @@ let () =
        ; "encode", encode_cmd
        ; "check", check_cmd
        ; "score", score_cmd
+       ; "explain", explain_cmd
        ; "bench", bench_cmd
        ])
 ;;
