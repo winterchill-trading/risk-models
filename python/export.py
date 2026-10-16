@@ -28,8 +28,9 @@ scikit-learn's own predictions on the test window; the parity fixture then recor
 
 For the tree models, a second fixture (<name>.shap.csv) records per-feature attributions
 from the shap library's TreeExplainer: path-dependent for the first 200 parity rows, and
-interventional for the first 50 against the last 100 rows as background. The OCaml
-Tree_shap module must reproduce them.
+interventional for 50 rows against a background of 100 others (their indices are the
+"background" lines), leaving out rows with a value exactly on a split threshold. The
+OCaml Tree_shap module must reproduce them.
 
 Usage: uv run python export.py [--data data/synthetic.npz] [--trained data/trained.pkl]
 """
@@ -214,6 +215,23 @@ def shap_model(model, entry):
                 tree_output="raw_value", input_dtype=np.float64, internal_dtype=np.float64)
 
 
+def split_values(model):
+    """(feature, threshold) of every split, to find rows sitting exactly on one."""
+    out = set()
+    if model["kind"] == "gbdt":
+        for t in model["gbdt"]["trees"]:
+            out |= {(f, th) for f, th in zip(t["feature"], t["threshold"]) if f >= 0}
+    else:
+        def walk(node):
+            if "split_feature" in node:
+                out.add((node["split_feature"], float(node["threshold"])))
+                walk(node["left_child"])
+                walk(node["right_child"])
+        for t in model["lightgbm"]["tree_info"]:
+            walk(t["tree_structure"])
+    return out
+
+
 def write_shap_fixture(path, model, entry, X):
     import shap  # only the export needs it
 
@@ -223,14 +241,23 @@ def write_shap_fixture(path, model, entry, X):
     phi = e.shap_values(X[:SHAP_PATH_ROWS])
     base = float(np.ravel(e.expected_value)[0])
     rows += [("path", i, base, phi[i]) for i in range(SHAP_PATH_ROWS)]
-    bg = X[-SHAP_BACKGROUND:]
+    # shap 0.53's interventional values stop adding up when a row has a value exactly on
+    # a split threshold (one tree's sum came out at -0.022 against a true difference of
+    # 0.059; a one-split tree is fine, so the cause is deeper in shap's walk). Such rows
+    # stay out of the interventional part; the OCaml tests cover them against
+    # enumerated Shapley values instead.
+    at_split = split_values(model)
+    clean = [i for i, x in enumerate(X)
+             if not any((f, float(v)) in at_split for f, v in enumerate(x))]
+    explained, background = clean[:SHAP_INTERVENTIONAL_ROWS], clean[-SHAP_BACKGROUND:]
+    bg = X[background]
     e = shap.TreeExplainer(m, data=bg, feature_perturbation="interventional")
     # shap's interventional code adds in single precision (a leaf of 1 + 1e-12 comes back
     # as exactly 1), so its values add up to the margin only within about 1e-3 here; the
     # OCaml test compares against them with a matching tolerance.
-    phi = e.shap_values(X[:SHAP_INTERVENTIONAL_ROWS], check_additivity=False)
+    phi = e.shap_values(X[explained], check_additivity=False)
     base = float(np.ravel(e.expected_value)[0])
-    rows += [("interventional", i, base, phi[i]) for i in range(SHAP_INTERVENTIONAL_ROWS)]
+    rows += [("interventional", i, base, p) for i, p in zip(explained, phi)]
     # Additivity, so a fixture that disagrees with the scorer never gets written.
     worst = {"path": 0.0, "interventional": 0.0}
     for method, i, b, p in rows:
@@ -243,6 +270,9 @@ def write_shap_fixture(path, model, entry, X):
         w.writerow(["method", "row", "base"] + schema.FEATURES)
         for method, i, b, p in rows:
             w.writerow([method, i, repr(b)] + [repr(float(v)) for v in p])
+        # The background rows' indices, so the OCaml test rebuilds the same sample.
+        for i in background:
+            w.writerow(["background", i, ""] + [""] * len(schema.FEATURES))
     return worst
 
 
