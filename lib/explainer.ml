@@ -15,16 +15,17 @@ type t =
   ; scorer : Scorer.t option
   }
 
-let tree ?background forest =
+let tree ?max_table_depth ?background forest =
   match background with
   | None ->
-    Tree_shap.workspace forest |> Or_error.map ~f:(fun ws -> Path ws, Forest.bias forest)
+    Tree_shap.workspace ?max_table_depth forest
+    |> Or_error.map ~f:(fun ws -> Path ws, Forest.bias forest)
   | Some rows ->
     Tree_shap.Background.create forest rows
     |> Or_error.map ~f:(fun bg -> Background bg, Tree_shap.Background.base bg)
 ;;
 
-let of_forest ?background ~name ~version ~names forest =
+let of_forest ?max_table_depth ?background ~name ~version ~names forest =
   let open Or_error.Let_syntax in
   let%bind () =
     if Array.length names = Forest.n_features forest
@@ -36,15 +37,15 @@ let of_forest ?background ~name ~version ~names forest =
             ~names:(Array.length names : int)
             ~features:(Forest.n_features forest : int)]
   in
-  let%map body, base = tree ?background forest in
+  let%map body, base = tree ?max_table_depth ?background forest in
   { name; version; names; body; base; scorer = None }
 ;;
 
-let create ?background scorer =
+let create ?max_table_depth ?background scorer =
   let open Or_error.Let_syntax in
   let%map body, base =
     match Scorer.body scorer with
-    | Forest f -> tree ?background f
+    | Forest f -> tree ?max_table_depth ?background f
     | Linear l -> Ok (Linear l, Linear.intercept l)
   in
   { name = Scorer.name scorer

@@ -13,13 +13,19 @@ open! Core
 type t
 
 (** Fails for a tree model exported without node covers (path-dependent) or a background
-    of the wrong width. *)
-val create : ?background:float array array -> Scorer.t -> t Or_error.t
+    of the wrong width. [max_table_depth] is passed to {!Tree_shap.workspace}: lower it to
+    trade latency for memory on deep trees. *)
+val create
+  :  ?max_table_depth:int
+  -> ?background:float array array
+  -> Scorer.t
+  -> t Or_error.t
 
 (** For a {!Forest} outside a {!Scorer} (another library's model): [name] and [version] go
     into each explanation, [names] has one entry per feature. *)
 val of_forest
-  :  ?background:float array array
+  :  ?max_table_depth:int
+  -> ?background:float array array
   -> name:string
   -> version:string
   -> names:string array
