@@ -44,7 +44,8 @@ module Background : sig
   (** A background sample for interventional attributions. *)
   type t
 
-  (** At least one row, each of [Forest.n_features] entries. *)
+  (** At least one row, each of [Forest.n_features] entries (copied). Holds scratch space:
+      one explanation at a time. *)
   val create : Forest.t -> float array array -> t Or_error.t
 
   val forest : t -> Forest.t
@@ -57,4 +58,7 @@ end
 (** Overwrites [into] with the interventional attributions of [x] against the background
     (the mean over its rows) and returns the margin. Time is proportional to the number of
     background rows. *)
+val interventional_u : Background.t -> float array -> into:float array -> float#
+[@@zero_alloc]
+
 val interventional : Background.t -> float array -> into:float array -> float

@@ -247,6 +247,16 @@ module Background = struct
     { forest : Forest.t
     ; rows : float array array
     ; base : float
+    ; n_features : int
+    ; roots : int array
+    ; feature : int array
+    ; value : float array
+    ; width : int (** max depth + 1, the row length of [weight] *)
+    ; weight : float array (** [weight.(a * width + b)] = a! b! / (a + b + 1)! *)
+    ; side : int array
+    (** per feature: 0 undecided, 1 from x, 2 from the background row *)
+    ; xs : int array (** features taken from x on the current path *)
+    ; zs : int array (** features taken from the background row *)
     }
 
   let forest t = t.forest
@@ -268,7 +278,31 @@ module Background = struct
               ~expected:(n : int)]
       | None ->
         let sum = Array.sum (module Float) rows ~f:(Forest.margin forest) in
-        Ok { forest; rows; base = sum /. Float.of_int (Array.length rows) })
+        let width = Forest.max_depth forest + 1 in
+        let fact k =
+          List.fold
+            (List.range 1 (k + 1))
+            ~init:1.
+            ~f:(fun acc i -> acc *. Float.of_int i)
+        in
+        Ok
+          { forest
+          ; rows = Array.map rows ~f:Array.copy
+          ; base = sum /. Float.of_int (Array.length rows)
+          ; n_features = n
+          ; roots = Forest.Raw.roots forest
+          ; feature = Forest.Raw.feature forest
+          ; value = Forest.Raw.value forest
+          ; width
+          ; weight =
+              Array.init (width * width) ~f:(fun i ->
+                let a = i / width
+                and b = i mod width in
+                fact a *. fact b /. fact (a + b + 1))
+          ; side = Array.create ~len:n 0
+          ; xs = Array.create ~len:width 0
+          ; zs = Array.create ~len:width 0
+          })
   ;;
 end
 
@@ -279,71 +313,67 @@ end
    closed-form: each x-set feature gets + value * (a-1)! b! / (a+b)!, each z-set feature -
    value * a! (b-1)! / (a+b)!. *)
 
-let interventional (bg : Background.t) (x : float array) ~(into : float array) =
-  let f = bg.forest in
-  let n = Forest.n_features f in
+let[@zero_alloc] rec walk (bg : Background.t) x z (into : float array) ~node ~a ~b =
+  let split = Array.unsafe_get bg.feature node in
+  if split < 0
+  then (
+    let v = Array.unsafe_get bg.value node in
+    if a > 0
+    then (
+      let pos = v *. Array.unsafe_get bg.weight (((a - 1) * bg.width) + b) in
+      for i = 0 to a - 1 do
+        let f = Array.unsafe_get bg.xs i in
+        Array.unsafe_set into f (Array.unsafe_get into f +. pos)
+      done);
+    if b > 0
+    then (
+      let neg = v *. Array.unsafe_get bg.weight ((a * bg.width) + b - 1) in
+      for i = 0 to b - 1 do
+        let f = Array.unsafe_get bg.zs i in
+        Array.unsafe_set into f (Array.unsafe_get into f -. neg)
+      done))
+  else (
+    let cx = Forest.Raw.next bg.forest x node
+    and cz = Forest.Raw.next bg.forest z node in
+    if cx = cz
+    then walk bg x z into ~node:cx ~a ~b
+    else (
+      match Array.unsafe_get bg.side split with
+      | 1 -> walk bg x z into ~node:cx ~a ~b
+      | 2 -> walk bg x z into ~node:cz ~a ~b
+      | _ ->
+        Array.unsafe_set bg.side split 1;
+        Array.unsafe_set bg.xs a split;
+        walk bg x z into ~node:cx ~a:(a + 1) ~b;
+        Array.unsafe_set bg.side split 2;
+        Array.unsafe_set bg.zs b split;
+        walk bg x z into ~node:cz ~a ~b:(b + 1);
+        Array.unsafe_set bg.side split 0))
+;;
+
+let[@zero_alloc] interventional_u
+  (bg : Background.t)
+  (x : float array)
+  ~(into : float array)
+  =
+  let n = bg.n_features in
   if Array.length x <> n || Array.length into <> n
   then invalid_arg "Tree_shap.interventional: wrong feature count";
-  Array.fill into ~pos:0 ~len:n 0.;
-  let d = Forest.max_depth f in
-  (* weight.(a).(b) = a! b! / (a + b + 1)! *)
-  let weight =
-    Array.init (d + 1) ~f:(fun a ->
-      Array.init (d + 1) ~f:(fun b ->
-        let fact k =
-          List.fold
-            (List.range 1 (k + 1))
-            ~init:1.
-            ~f:(fun acc i -> acc *. Float.of_int i)
-        in
-        fact a *. fact b /. fact (a + b + 1)))
-  in
-  (* 0 undecided, 1 from x, 2 from z *)
-  let side = Array.create ~len:n 0 in
-  let xs = Array.create ~len:(d + 1) 0
-  and zs = Array.create ~len:(d + 1) 0 in
-  let feature = Forest.Raw.feature f
-  and value = Forest.Raw.value f in
-  let rec walk z node ~a ~b =
-    let split = feature.(node) in
-    if split < 0
-    then (
-      let v = value.(node) in
-      if a > 0
-      then (
-        let pos = v *. weight.(a - 1).(b) in
-        for i = 0 to a - 1 do
-          into.(xs.(i)) <- into.(xs.(i)) +. pos
-        done);
-      if b > 0
-      then (
-        let neg = v *. weight.(a).(b - 1) in
-        for i = 0 to b - 1 do
-          into.(zs.(i)) <- into.(zs.(i)) -. neg
-        done))
-    else (
-      let cx = Forest.Raw.next f x node
-      and cz = Forest.Raw.next f z node in
-      if cx = cz
-      then walk z cx ~a ~b
-      else (
-        match side.(split) with
-        | 1 -> walk z cx ~a ~b
-        | 2 -> walk z cz ~a ~b
-        | _ ->
-          side.(split) <- 1;
-          xs.(a) <- split;
-          walk z cx ~a:(a + 1) ~b;
-          side.(split) <- 2;
-          zs.(b) <- split;
-          walk z cz ~a ~b:(b + 1);
-          side.(split) <- 0))
-  in
-  let roots = Forest.Raw.roots f in
-  Array.iter bg.rows ~f:(fun z -> Array.iter roots ~f:(fun r -> walk z r ~a:0 ~b:0));
-  let k = Float.of_int (Array.length bg.rows) in
   for i = 0 to n - 1 do
-    into.(i) <- into.(i) /. k
+    Array.unsafe_set into i 0.
   done;
-  Forest.margin f x
+  let rows = bg.rows in
+  for r = 0 to Array.length rows - 1 do
+    let z = Array.unsafe_get rows r in
+    for k = 0 to Array.length bg.roots - 1 do
+      walk bg x z into ~node:(Array.unsafe_get bg.roots k) ~a:0 ~b:0
+    done
+  done;
+  let k = Float.of_int (Array.length rows) in
+  for i = 0 to n - 1 do
+    Array.unsafe_set into i (Array.unsafe_get into i /. k)
+  done;
+  Forest.margin_u bg.forest x
 ;;
+
+let interventional bg x ~into = Float_u.to_float (interventional_u bg x ~into)
