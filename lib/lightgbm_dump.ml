@@ -112,10 +112,12 @@ let of_yojson ~n_features json =
   and missing = Queue.create ()
   and left = Queue.create ()
   and right = Queue.create ()
-  and value = Queue.create () in
+  and value = Queue.create ()
+  and cover = Queue.create () in
   let rec emit node =
     let i = Queue.length feature in
     Queue.enqueue value (expected node);
+    Queue.enqueue cover (count node);
     match node with
     | Leaf _ ->
       Queue.enqueue feature (-1);
@@ -150,5 +152,6 @@ let of_yojson ~n_features json =
     ~left:(Queue.to_array left)
     ~right:(Queue.to_array right)
     ~value:(Queue.to_array value)
+    ~cover:(Queue.to_array cover)
     ()
 ;;

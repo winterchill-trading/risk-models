@@ -21,6 +21,8 @@ type t =
   ; left : int array
   ; right : int array
   ; value : float array
+  ; cover : float array option
+  ; max_depth : int
   }
 [@@deriving sexp_of]
 
@@ -28,6 +30,8 @@ let n_features t = t.n_features
 let n_trees t = Array.length t.roots
 let n_nodes t = Array.length t.feature
 let bias t = t.bias
+let cover t = t.cover
+let max_depth t = t.max_depth
 
 let create
   ~n_features
@@ -40,6 +44,7 @@ let create
   ~left
   ~right
   ~value
+  ?cover
   ()
   =
   let n = Array.length feature in
@@ -75,11 +80,26 @@ let create
   then Or_error.error_s [%message "root index out of range"]
   else if not (Array.for_all value ~f:Float.is_finite)
   then Or_error.error_s [%message "non-finite node value"]
+  else if Option.exists cover ~f:(fun c -> Array.length c <> n)
+  then Or_error.error_s [%message "cover array differs in length from the nodes"]
+  else if Option.exists
+            cover
+            ~f:(Array.exists ~f:(fun c -> not Float.(is_finite c && c > 0.)))
+  then Or_error.error_s [%message "node covers must be finite and positive"]
   else (
     match check 0 with
     | Error _ as e -> e
     | Ok () ->
       let bias = Array.fold roots ~init:base_score ~f:(fun acc r -> acc +. value.(r)) in
+      (* Children follow their parent, so one forward sweep sets every node's depth. *)
+      let depth = Array.create ~len:n 0 in
+      for i = 0 to n - 1 do
+        if feature.(i) >= 0
+        then (
+          depth.(left.(i)) <- depth.(i) + 1;
+          depth.(right.(i)) <- depth.(i) + 1)
+      done;
+      let max_depth = Array.fold depth ~init:0 ~f:Int.max in
       Ok
         { n_features
         ; base_score
@@ -92,6 +112,8 @@ let create
         ; left
         ; right
         ; value
+        ; cover
+        ; max_depth
         })
 ;;
 
@@ -107,10 +129,30 @@ let of_yojson ~n_features json =
        let%bind default_left = field "missing_left" (array int) tree in
        let%bind left = field "left" (array int) tree in
        let%bind right = field "right" (array int) tree in
-       let%map value = field "value" (array float) tree in
-       feature, threshold, Array.map default_left ~f:(fun b -> b <> 0), left, right, value)
+       let%bind value = field "value" (array float) tree in
+       (* [count] (training samples per node) is optional: exports before attributions did
+          not write it, and only [Tree_shap] needs it. *)
+       let%map count =
+         match member "count" tree with
+         | Error _ | Ok `Null -> Ok None
+         | Ok j -> array float j >>| Option.some
+       in
+       ( ( feature
+         , threshold
+         , Array.map default_left ~f:(fun b -> b <> 0)
+         , left
+         , right
+         , value )
+       , count ))
       |> Or_error.tag_s ~tag:[%message "in tree" (k : int)])
     |> Or_error.combine_errors
+  in
+  let counts = List.map parts ~f:snd in
+  let parts = List.map parts ~f:fst in
+  let cover =
+    if List.for_all counts ~f:Option.is_some
+    then Some (Array.concat (List.filter_opt counts))
+    else None
   in
   (* Concatenate the trees, shifting child indices by each tree's offset. *)
   let offsets =
@@ -133,6 +175,7 @@ let of_yojson ~n_features json =
       (Array.concat
          (List.map2_exn parts offsets ~f:(fun (_, _, _, _, r, _) o -> shift o r)))
     ~value:(cat (fun (_, _, _, _, _, v) -> v))
+    ?cover
     ()
 ;;
 
@@ -172,6 +215,15 @@ let[@zero_alloc] margin_u t (x : float array) =
 ;;
 
 let margin t x = Float_u.to_float (margin_u t x)
+
+module Raw = struct
+  let roots t = t.roots
+  let feature t = t.feature
+  let left t = t.left
+  let right t = t.right
+  let value t = t.value
+  let[@zero_alloc] next t x i = child t x i
+end
 
 let[@zero_alloc] contributions_u t (x : float array) ~(into : float array) =
   if Array.length x <> t.n_features || Array.length into <> t.n_features

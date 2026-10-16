@@ -39,10 +39,14 @@ val create
   -> left:int array
   -> right:int array
   -> value:float array
+  -> ?cover:float array
+       (** training samples (or their weight) reaching each node; needed for
+           path-dependent attributions ({!Tree_shap}), finite and positive *)
   -> unit
   -> t Or_error.t
 
-(** The [gbdt] object of the exported model format, see [python/export.py]. *)
+(** The [gbdt] object of the exported model format, see [python/export.py]. Each tree's
+    optional [count] array becomes the cover; it is used only when every tree has one. *)
 val of_yojson : n_features:int -> Yojson.Safe.t -> t Or_error.t
 
 val n_features : t -> int
@@ -51,6 +55,12 @@ val n_nodes : t -> int
 
 (** [base_score] plus the expected value of every root: the margin before any split. *)
 val bias : t -> float
+
+(** Node covers, when the export has them. *)
+val cover : t -> float array option
+
+(** The longest root-to-leaf path, in splits. *)
+val max_depth : t -> int
 
 (** Raw margin (log-odds). [x] must have [n_features t] entries (checked). *)
 val margin_u : t -> float array -> float#
@@ -62,3 +72,18 @@ val margin : t -> float array -> float
     margin. *)
 val contributions_u : t -> float array -> into:float array -> float#
 [@@zero_alloc]
+
+(** Read-only views of the node arrays, for attribution algorithms ({!Tree_shap}). Do not
+    mutate them. *)
+module Raw : sig
+  val roots : t -> int array
+  val feature : t -> int array
+  val left : t -> int array
+  val right : t -> int array
+  val value : t -> float array
+
+  (** The child of split node [i] that [x] follows (missing values per the node's
+      {!Missing.t}). *)
+  val next : t -> float array -> int -> int
+  [@@zero_alloc]
+end
