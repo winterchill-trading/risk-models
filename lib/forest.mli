@@ -86,4 +86,8 @@ module Raw : sig
       {!Missing.t}). *)
   val next : t -> float array -> int -> int
   [@@zero_alloc]
+
+  (** Whether [x] takes the left child at split node [i]. *)
+  val goes_left : t -> float array -> int -> bool
+  [@@zero_alloc]
 end

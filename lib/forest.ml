@@ -179,7 +179,7 @@ let of_yojson ~n_features json =
     ()
 ;;
 
-let[@zero_alloc] [@inline] child t (x : float array) i =
+let[@zero_alloc] [@inline] goes_left t (x : float array) i =
   let v = Array.unsafe_get x (Array.unsafe_get t.feature i) in
   let threshold = Array.unsafe_get t.threshold i in
   (* LightGBM's NumericalDecision, which also covers scikit-learn's rule. *)
@@ -196,7 +196,11 @@ let[@zero_alloc] [@inline] child t (x : float array) i =
       then Array.unsafe_get t.default_left i
       else Float.( <= ) v threshold
   in
-  if go_left then Array.unsafe_get t.left i else Array.unsafe_get t.right i
+  go_left
+;;
+
+let[@zero_alloc] [@inline] child t (x : float array) i =
+  if goes_left t x i then Array.unsafe_get t.left i else Array.unsafe_get t.right i
 ;;
 
 let[@zero_alloc] margin_u t (x : float array) =
@@ -222,7 +226,8 @@ module Raw = struct
   let left t = t.left
   let right t = t.right
   let value t = t.value
-  let[@zero_alloc] next t x i = child t x i
+  let[@zero_alloc] [@inline] next t x i = child t x i
+  let[@zero_alloc] [@inline] goes_left t x i = goes_left t x i
 end
 
 let[@zero_alloc] contributions_u t (x : float array) ~(into : float array) =
