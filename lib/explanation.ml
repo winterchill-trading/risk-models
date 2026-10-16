@@ -24,7 +24,7 @@ module Contribution = struct
   type t =
     { feature : string
     ; label : string
-    ; value : float
+    ; value : float option
     ; contribution : float
     }
   [@@deriving bin_io, sexp, compare, equal]
@@ -100,14 +100,12 @@ let create
       |> List.map ~f:(fun i ->
         { Contribution.feature = names.(i)
         ; label = label names.(i)
-        ; value = x.(i)
+        ; value = Option.some_if (not (Float.is_nan x.(i))) x.(i)
         ; contribution = contributions.(i)
         })
   ; rest = !rest
   }
 ;;
-
-let json_float f = if Float.is_nan f then `Null else `Float f
 
 let to_yojson t : Yojson.Safe.t =
   `Assoc
@@ -124,7 +122,7 @@ let to_yojson t : Yojson.Safe.t =
              `Assoc
                [ "feature", `String c.feature
                ; "label", `String c.label
-               ; "value", json_float c.value
+               ; "value", Option.value_map c.value ~default:`Null ~f:(fun v -> `Float v)
                ; "contribution", `Float c.contribution
                ])) )
     ; "rest", `Float t.rest
@@ -141,22 +139,15 @@ let of_yojson json =
     else Or_error.error_s [%message "unknown explanation format" (format : int)]
   in
   let nullable_float = function
-    | `Null -> Ok Float.nan
-    | j -> float j
+    | `Null -> Ok None
+    | j -> float j >>| Option.some
   in
   let%bind model = field "model" string json in
   let%bind version = field "version" string json in
   let%bind method_ = field "method" string json >>= Method.of_string in
   let%bind base = field "base" float json in
   let%bind margin = field "margin" float json in
-  let%bind score =
-    field
-      "score"
-      (function
-        | `Null -> Ok None
-        | j -> float j >>| Option.some)
-      json
-  in
+  let%bind score = field "score" nullable_float json in
   let%bind top =
     field
       "top"

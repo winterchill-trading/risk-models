@@ -30,7 +30,7 @@ module Contribution : sig
   type t =
     { feature : string (** schema name, e.g. ["beneficiary_age_hours"] *)
     ; label : string (** human-readable name; the schema name when none is given *)
-    ; value : float (** the row's value, NaN when missing *)
+    ; value : float option (** the row's value, [None] when missing *)
     ; contribution : float (** to the log-odds *)
     }
   [@@deriving sexp, compare, equal]
@@ -78,7 +78,8 @@ type t = Stable.V1.t =
 
 (** Picks the [k] (default 5) largest contributions by absolute value, ties by feature
     index, skipping exact zeros. [names], [x] and [contributions] have one entry per
-    feature. [label] maps a schema name to a human-readable one. *)
+    feature; a NaN in [x] is a missing value. [label] maps a schema name to a
+    human-readable one. *)
 val create
   :  ?k:int
   -> ?label:(string -> string)
