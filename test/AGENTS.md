@@ -5,6 +5,10 @@ risk-model adapter and stable formats.
 
 - `test_parity.ml` scores the fixtures in `fixtures/` and compares with the Python scores. The fixtures
   come from `python/export.py`. Regenerate them there, never by hand.
+- `test_tree_shap.ml` checks attributions against Shapley values enumerated over every feature subset
+  of small random forests; `test_shap_parity.ml` against the shap fixtures (`fixtures/*.shap.csv`,
+  written by `python/export.py`); `test_explanation.ml` the explanation record, JSON and allocation;
+  `test_abstain.ml` the abstain wrapper and curves.
 - `test_stable.ml` pins the Bin_prot shape digests of the types that are journaled. A changed digest
   means journaled scores or calibration tables change format: decide that on purpose and say so in the commit.
 - The test stanza depends on `../models` and `../python/risk_models_train/features.json`. A missing

@@ -10,7 +10,8 @@ uv sync --locked                       # install the pinned dependencies from uv
 uv run python generate.py              # data/synthetic.npz (synthetic, 6000 customers, 91 days)
 uv run python train.py                 # data/trained.pkl: gradient-boosted trees and a logistic baseline
 uv run python evaluate.py              # ../models/<name>/metrics.json and CARD.md
-uv run python export.py                # ../models/<name>/model.json and ../test/fixtures/*.csv
+uv run python export.py                # ../models/<name>/model.json, ../test/fixtures/*.csv (parity
+                                       # and shap attribution fixtures)
 ```
 
 - Use `uv sync --locked` (not a plain `uv sync`) so the lock file is respected. Change dependencies with
