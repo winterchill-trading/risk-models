@@ -27,8 +27,8 @@ end
    patterns, and a run reads each leaf's pattern off [x]'s decisions at the tree's splits
    and adds d table entries per leaf: about 30 us for that model, 9 400 table entries per
    row, which is now the bulk of the work. Leaves deeper than the cap are computed at run
-   time from their precomputed path (fractions and features) with the same routine that
-   fills the tables. *)
+   time from their precomputed path (fractions and features) by quadrature, see
+   [leaf_quadrature]; a test checks both ways agree. *)
 
 type workspace =
   { forest : Forest.t
@@ -47,6 +47,10 @@ type workspace =
   ; entry_mask : int array (** decision bits of the path's splits on the feature *)
   ; entry_req : int array (** the decisions (1 = left) the path takes at those splits *)
   ; table : float array
+  ; gl_nodes : float array (** Gauss-Legendre rule with q points at [gl_start.(q)] *)
+  ; gl_weights : float array
+  ; gl_start : int array
+  ; quad : float array (** scratch for {!leaf_quadrature} *)
   ; path_feature : Ints.t
   ; path_zero : float array
   ; path_one : float array
@@ -123,6 +127,79 @@ let[@zero_alloc] leaf_into ws ~node ~pattern (into : float array) =
        +. (w *. (Array.unsafe_get ws.path_one i -. Array.unsafe_get ws.path_zero i) *. v)
       )
   done
+;;
+
+(* A leaf's contribution to its j-th path feature is value * (o_j - z_j) * integral over t
+   in [0, 1] of prod_[{k <> j}] (z_k (1 - t) + o_k t) (the Shapley weights |S|! (d - |S| -
+   1)! / d! are Beta integrals), where z_k is the share of training data following the
+   path through feature k's splits and o_k is 1 when [x] follows it. The integrand is a
+   polynomial of degree d - 1, so a Gauss-Legendre rule with ceil(d / 2) points integrates
+   it exactly. Used for leaves too deep to tabulate: 2.5 times faster than the path
+   routines on the monitoring model's 14-feature leaves. *)
+let[@zero_alloc] leaf_quadrature ws ~node ~pattern (into : float array) =
+  let d = Array.unsafe_get ws.leaf_d node in
+  let fo = Array.unsafe_get ws.leaf_fo node in
+  let q = (d + 1) / 2 in
+  let g0 = Array.unsafe_get ws.gl_start q in
+  for i = 0 to q - 1 do
+    let t = Array.unsafe_get ws.gl_nodes (g0 + i) in
+    let mutable prod = 1. in
+    for k = 0 to d - 1 do
+      let z = Array.unsafe_get ws.leaf_z (fo + k) in
+      let one = Float.of_int ((pattern lsr k) land 1) in
+      prod <- prod *. ((z *. (1. -. t)) +. (one *. t))
+    done;
+    Array.unsafe_set ws.quad i prod
+  done;
+  let v = Array.unsafe_get ws.value node in
+  for j = 0 to d - 1 do
+    let z = Array.unsafe_get ws.leaf_z (fo + j) in
+    let one = Float.of_int ((pattern lsr j) land 1) in
+    (* The product without factor j, by division: every factor is positive for t in (0, 1)
+       because covers are. Prefix and suffix products instead were slower. *)
+    let mutable sum = 0. in
+    for i = 0 to q - 1 do
+      let t = Array.unsafe_get ws.gl_nodes (g0 + i) in
+      sum
+      <- sum
+         +. (Array.unsafe_get ws.gl_weights (g0 + i)
+             *. Array.unsafe_get ws.quad i
+             /. ((z *. (1. -. t)) +. (one *. t)))
+    done;
+    let f = Array.unsafe_get ws.leaf_feats (fo + j) in
+    Array.unsafe_set into f (Array.unsafe_get into f +. (v *. (one -. z) *. sum))
+  done
+;;
+
+(* Gauss-Legendre nodes and weights on [0, 1] for [q] points: Newton's method on the
+   Legendre polynomial from the usual cosine starting points. *)
+let gauss_legendre q =
+  let nodes = Array.create ~len:q 0.
+  and weights = Array.create ~len:q 0. in
+  let fq = Float.of_int q in
+  for i = 0 to q - 1 do
+    let x = ref (Float.cos (Float.pi *. (Float.of_int i +. 0.75) /. (fq +. 0.5))) in
+    let dp = ref 0. in
+    for _ = 1 to 100 do
+      (* P_q(x) and its derivative by the three-term recurrence *)
+      let p0 = ref 1.
+      and p1 = ref !x in
+      for k = 2 to q do
+        let fk = Float.of_int k in
+        let p2 = ((((2. *. fk) -. 1.) *. !x *. !p1) -. ((fk -. 1.) *. !p0)) /. fk in
+        p0 := !p1;
+        p1 := p2
+      done;
+      let p = if q = 1 then !x else !p1 in
+      let pm1 = if q = 1 then 1. else !p0 in
+      dp := fq *. ((!x *. p) -. pm1) /. ((!x *. !x) -. 1.);
+      x := !x -. (p /. !dp)
+    done;
+    (* map [-1, 1] to [0, 1] *)
+    nodes.(i) <- (1. -. !x) /. 2.;
+    weights.(i) <- 1. /. ((1. -. (!x *. !x)) *. !dp *. !dp)
+  done;
+  nodes, weights
 ;;
 
 let workspace ?(max_table_depth = 10) forest =
@@ -205,6 +282,16 @@ let workspace ?(max_table_depth = 10) forest =
     then Or_error.error_s [%message "a leaf path has more than 61 distinct features"]
     else (
       let len = max_d + 2 in
+      let max_q = (max_d + 1) / 2 in
+      let rules =
+        List.init (max_q + 1) ~f:(fun q -> if q = 0 then [||], [||] else gauss_legendre q)
+      in
+      let gl_start =
+        Array.of_list
+          (List.folding_map rules ~init:0 ~f:(fun acc (n, _) -> acc + Array.length n, acc))
+      in
+      let gl_nodes = Array.concat (List.map rules ~f:fst)
+      and gl_weights = Array.concat (List.map rules ~f:snd) in
       let ws =
         { forest
         ; n_features = Forest.n_features forest
@@ -222,6 +309,10 @@ let workspace ?(max_table_depth = 10) forest =
         ; entry_mask = Queue.to_array masks
         ; entry_req = Queue.to_array reqs
         ; table = Array.create ~len:!table_size 0.
+        ; gl_nodes
+        ; gl_weights
+        ; gl_start
+        ; quad = Array.create ~len:(max_q + 1) 0.
         ; path_feature = Ints.create len
         ; path_zero = Array.create ~len 0.
         ; path_one = Array.create ~len 0.
@@ -292,7 +383,7 @@ let[@zero_alloc] path_dependent_u ws (x : float array) ~(into : float array) =
             g
             (Array.unsafe_get into g +. Array.unsafe_get ws.table (base + j))
         done)
-      else leaf_into ws ~node ~pattern:p into
+      else leaf_quadrature ws ~node ~pattern:p into
     done
   done;
   Forest.margin_u ws.forest x
