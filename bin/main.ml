@@ -143,8 +143,9 @@ let bench_cmd =
                   Bench.explanation e rows ~calls:(calls / 10))
                 : Bench.result option)
              ~interventional:
-               (Bench.attribute interventional rows ~calls:(Int.max 1 (calls / 1000))
-                : Bench.result)
+               (Option.map interventional ~f:(fun e ->
+                  Bench.attribute e rows ~calls:(Int.max 1 (calls / 1000)))
+                : Bench.result option)
              ~background_rows:(Array.length background : int)])
 ;;
 
