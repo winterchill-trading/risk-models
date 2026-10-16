@@ -123,7 +123,11 @@ let bench_cmd =
        let path_dependent = Explainer.create m |> Or_error.ok in
        (* Interventional cost grows with the background, so it runs fewer calls. *)
        let background = Array.sub rows ~pos:0 ~len:(Int.min 100 (Array.length rows)) in
-       let interventional = Explainer.create ~background m |> ok in
+       let interventional =
+         match Scorer.body m with
+         | Forest _ -> Some (Explainer.create ~background m |> ok)
+         | Linear _ -> None
+       in
        print_s
          [%message
            (Scorer.name m)
