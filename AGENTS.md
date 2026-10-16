@@ -11,8 +11,8 @@ pipeline works and say nothing about real payments.
 
 | Path | Holds |
 | --- | --- |
-| `lib/` | The `risk_models` library: schema, encoding, forest, linear baseline, calibration, LightGBM dump reader, scorer, rule adapter, drift monitor |
-| `bin/` | The `risk-models` CLI: `schema`, `encode`, `check`, `score`, `bench` |
+| `lib/` | The `risk_models` library: schema, encoding, forest, linear baseline, calibration, LightGBM dump reader, scorer, rule adapter, drift monitor, exact attributions (`Tree_shap`, `Explainer`, `Explanation`), abstention (`Abstain`) |
+| `bin/` | The `risk-models` CLI: `schema`, `encode`, `check`, `score`, `explain`, `bench` |
 | `models/` | Committed model exports (`model.json`), metrics and `CARD.md` per model |
 | `python/` | Training pipeline (`generate.py`, `train.py`, `evaluate.py`, `export.py`), run with `uv`; see `python/AGENTS.md` |
 | `test/` | Inline tests, parity fixtures in `test/fixtures/` written by `export.py` |
@@ -44,7 +44,10 @@ Python (training, evaluation, export): see `python/AGENTS.md`. Training takes ab
   `dune fmt` at the workspace root.
 - Every module has an `.mli`. Use labelled arguments, `open! Core`, and `ppx_jane`.
 - Scoring hot paths are `[@zero_alloc]` (`Forest.margin_u`, `Forest.contributions_u`,
-  `Calibration.apply_u`). Keep them that way and check with `Bench`.
+  `Calibration.apply_u`, `Tree_shap.path_dependent_u`, `Tree_shap.interventional_u`). Keep them
+  that way and check with `Bench`.
+- Attributions are model contributions to the log-odds, not causes. Say so wherever they reach a
+  person. `base + contributions = margin` must hold on every fixture row.
 - The feature schema belongs to risk-rules. `python/risk_models_train/features.json` is generated
   by `risk-models schema`; a test fails when it and the library disagree. Regenerate, do not hand-edit.
 - A retrain is a new `model.json`, reviewed like code. Do not change the rule engine to fit a model.
@@ -78,6 +81,11 @@ Do not poll in a loop.
 - scikit-learn's tree arrays are private attributes. Pin the scikit-learn version when retraining and
   read `docs/api-notes.md` first.
 - `export.py` asserts the scorer agrees with scikit-learn; a failing assertion means the export is wrong, not the test.
+- shap's interventional mode adds in single precision and goes wrong on rows with a value exactly on a
+  split threshold; the shap fixture leaves those rows out of its interventional part and the OCaml
+  test allows 1e-6 there (1e-12 for path-dependent). The enumerated-Shapley test covers those rows.
+- On OCaml 5 arm64 every store into an `int array` comes with a `dmb ishld` barrier; hot scratch
+  integers in `Tree_shap` live in float arrays. Profile before assuming a loop is memory-bound.
 - The Python generator re-implements the feature definitions. Training/serving skew is a known risk
   until labelled rows come through `risk-rules features` and `risk-models encode`.
 
