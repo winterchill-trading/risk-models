@@ -1,7 +1,9 @@
 (** Scoring latency, for the CLI and the README numbers.
 
-    Times [Scorer.score_u] (calibrated score, no reasons) and [Scorer.explain] (score with
-    three reasons, allocating) over the given rows, round-robin. Per-call times come from
+    Times [Scorer.score_u] (calibrated score, no reasons), [Scorer.explain] (score with
+    three reasons, allocating), [Explainer.contributions_u] (exact attributions into a
+    scratch array) and [Explainer.explain] (the attributions plus a five-feature
+    {!Explanation.t}) over the given rows, round-robin. Per-call times come from
     [Time_ns.now] around each call, so they include its overhead (tens of nanoseconds);
     the mean comes from one timer around the whole loop. *)
 
@@ -18,3 +20,5 @@ type result =
 
 val score : Scorer.t -> float array array -> calls:int -> result
 val explain : Scorer.t -> float array array -> calls:int -> result
+val attribute : Explainer.t -> float array array -> calls:int -> result
+val explanation : Explainer.t -> float array array -> calls:int -> result

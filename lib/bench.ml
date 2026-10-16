@@ -58,3 +58,22 @@ let explain model rows ~calls =
   run rows ~calls ~f:(fun x ->
     ignore (Sys.opaque_identity (Scorer.explain model x) : Risk_rules.Model.Score.t))
 ;;
+
+let attribute explainer rows ~calls =
+  match rows with
+  | [||] -> invalid_arg "Bench: no rows"
+  | _ ->
+    let into = Array.create ~len:(Array.length rows.(0)) 0. in
+    let sink = [| 0. |] in
+    let r =
+      run rows ~calls ~f:(fun x ->
+        sink.(0) <- Float_u.to_float (Explainer.contributions_u explainer x ~into))
+    in
+    ignore (Sys.opaque_identity sink : float array);
+    r
+;;
+
+let explanation explainer rows ~calls =
+  run rows ~calls ~f:(fun x ->
+    ignore (Sys.opaque_identity (Explainer.explain explainer x) : Explanation.t))
+;;
