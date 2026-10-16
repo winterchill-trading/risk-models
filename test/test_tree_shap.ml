@@ -230,3 +230,24 @@ let%expect_test "path-dependent attributions allocate nothing" =
   printf "words: %d\n" (Gc.minor_words () - before);
   [%expect {| words: 0 |}]
 ;;
+
+let%expect_test "leaves computed at run time agree with tabulated ones" =
+  let rand = Random.State.make [| 11 |] in
+  let worst = ref 0. in
+  for _ = 1 to 50 do
+    let forest = random_forest ~n_features:6 ~trees:3 ~max_depth:5 rand in
+    let tabulated = Tree_shap.workspace forest |> Or_error.ok_exn in
+    let at_run_time = Tree_shap.workspace ~max_table_depth:0 forest |> Or_error.ok_exn in
+    let mixed = Tree_shap.workspace ~max_table_depth:3 forest |> Or_error.ok_exn in
+    assert (Tree_shap.table_entries at_run_time = 0);
+    for _ = 1 to 5 do
+      let x = random_row ~n_features:6 rand in
+      let _, a = Tree_shap.path_dependent tabulated x in
+      let _, b = Tree_shap.path_dependent at_run_time x in
+      let _, c = Tree_shap.path_dependent mixed x in
+      worst := Float.max !worst (Float.max (worst_diff a b) (worst_diff a c))
+    done
+  done;
+  printf "max diff < 1e-12: %b\n" Float.(!worst < 1e-12);
+  [%expect {| max diff < 1e-12: true |}]
+;;
