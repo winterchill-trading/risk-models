@@ -8,9 +8,9 @@
 
     - {b Path-dependent} ({!path_dependent_u}): the others follow the training data down
       each tree, in proportion to the node covers. [base] is {!Forest.bias}, the
-      cover-weighted mean margin. This is the polynomial-time tree-path algorithm (time
-      per tree proportional to leaves times depth squared), needs the covers in the model
-      export, and allocates nothing.
+      cover-weighted mean margin. This is the polynomial-time tree-path algorithm with its
+      per-leaf results tabulated in advance (see {!workspace}); it needs the covers in the
+      model export and allocates nothing.
     - {b Interventional} ({!interventional}): the others take the values of rows from a
       background sample, independently of [x]. [base] is the mean margin over the
       background. It costs one walk per tree and background row. The two differ when
@@ -27,8 +27,16 @@ open! Core
     callers. *)
 type workspace
 
-(** Fails when the forest has no node covers (an export written before covers were added). *)
-val workspace : Forest.t -> workspace Or_error.t
+(** Precomputes, for every leaf whose path has at most [max_table_depth] (default 10)
+    distinct features, its contributions for each pattern of features [x] does or does not
+    follow (2^d times d floats per leaf: 4 MB for the bundled 150-tree model); deeper
+    leaves are computed at run time. Fails when the forest has no node covers (an export
+    written before covers were added) or a tree has more than 62 splits (63 leaves; the
+    decisions of a tree are the bits of one integer). *)
+val workspace : ?max_table_depth:int -> Forest.t -> workspace Or_error.t
+
+(** Floats in the precomputed tables. *)
+val table_entries : workspace -> int
 
 val forest : workspace -> Forest.t
 

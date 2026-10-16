@@ -1,24 +1,53 @@
 open! Core
 module Float_u = Stdlib_upstream_compatible.Float_u
 
-(* The path-dependent algorithm keeps, for the current root-to-node path, the "unique
-   path": one element per distinct feature split on so far (plus a dummy for the root),
-   each with the fraction of zero paths (the share of training data that followed this
-   path through that feature's splits) and one paths (1 when [x] followed it, else 0), and
-   the permutation weights of subsets of those features. A recursive call copies its
-   parent's path into the next segment of the arrays below, so no allocation happens while
-   walking. *)
+(* Scratch integers written in hot loops are stored as floats. On OCaml 5 arm64 every
+   store into an [int array] (and, measured, an int Bigarray) is preceded by a [dmb ishld]
+   barrier; a store into a float array is a plain store. Switching an earlier node-by-node
+   pass to floats took it from 45 to 31 us. Values stay below 2^53, so the conversion is
+   exact. *)
+module Ints = struct
+  type t = float array
+
+  let create len : t = Array.create ~len 0.
+  let[@inline] [@zero_alloc] get (t : t) i = Float.to_int (Array.unsafe_get t i)
+  let[@inline] [@zero_alloc] set (t : t) i v = Array.unsafe_set t i (Float.of_int v)
+end
+
+(* Path-dependent attributions, the standard way, walk every node of every tree keeping a
+   "unique path" (one element per distinct feature split on so far, with the share of
+   training data that followed the path through that feature's splits, whether [x]
+   followed it, and the permutation weights of subsets of those features). That costs
+   leaves times depth squared per tree, about 170 us for the bundled 150-tree model.
+
+   The contribution of one leaf depends on [x] only through which of the leaf's path
+   features [x] follows (all of that feature's splits on the path) and which it does not:
+   a pattern of d bits for a leaf with d distinct path features. So [workspace]
+   precomputes, for every leaf with d <= [max_table_depth], the contributions for all 2^d
+   patterns, and a run reads each leaf's pattern off [x]'s decisions at the tree's splits
+   and adds d table entries per leaf: about 30 us for that model, 9 400 table entries per
+   row, which is now the bulk of the work. Leaves deeper than the cap are computed at run
+   time from their precomputed path (fractions and features) with the same routine that
+   fills the tables. *)
 
 type workspace =
   { forest : Forest.t
-  ; cover : float array
   ; n_features : int
   ; roots : int array
-  ; feature : int array
-  ; left : int array
-  ; right : int array
   ; value : float array
-  ; path_feature : int array
+  ; split_start : int array (** tree k's splits: [split_nodes.(split_start.(k)) ...] *)
+  ; split_nodes : int array (** per tree, the split's index there is its decision bit *)
+  ; leaf_start : int array
+  ; leaf_nodes : int array
+  ; leaf_d : int array (** leaf: distinct features on its path *)
+  ; leaf_fo : int array (** leaf: offset of its path in [leaf_feats] and [leaf_z] *)
+  ; leaf_off : int array (** leaf: offset of its table, -1 when computed at run time *)
+  ; leaf_feats : int array
+  ; leaf_z : float array (** share of training data following the path, per feature *)
+  ; entry_mask : int array (** decision bits of the path's splits on the feature *)
+  ; entry_req : int array (** the decisions (1 = left) the path takes at those splits *)
+  ; table : float array
+  ; path_feature : Ints.t
   ; path_zero : float array
   ; path_one : float array
   ; path_weight : float array
@@ -26,191 +55,205 @@ type workspace =
 
 let forest ws = ws.forest
 
-let workspace forest =
+(* The standard path routines over the scratch path (dummy root element at index 0, the
+   last element at index [depth]). *)
+
+let[@zero_alloc] extend ws ~depth ~(zero : float#) ~(one : float#) ~feature =
+  let zero = Float_u.to_float zero
+  and one = Float_u.to_float one in
+  let pw = ws.path_weight in
+  Ints.set ws.path_feature depth feature;
+  Array.unsafe_set ws.path_zero depth zero;
+  Array.unsafe_set ws.path_one depth one;
+  Array.unsafe_set pw depth (if depth = 0 then 1. else 0.);
+  let d1 = Float.of_int (depth + 1) in
+  for i = depth - 1 downto 0 do
+    let w = Array.unsafe_get pw i in
+    Array.unsafe_set
+      pw
+      (i + 1)
+      (Array.unsafe_get pw (i + 1) +. (one *. w *. Float.of_int (i + 1) /. d1));
+    Array.unsafe_set pw i (zero *. w *. Float.of_int (depth - i) /. d1)
+  done
+;;
+
+(* The total permutation weight of the path with element [index] removed. *)
+let[@zero_alloc] unwound_sum ws ~depth ~index =
+  let pw = ws.path_weight in
+  let one = Array.unsafe_get ws.path_one index in
+  let zero = Array.unsafe_get ws.path_zero index in
+  let mutable total = 0. in
+  if Float.( <> ) one 0.
+  then (
+    let mutable next_one = Array.unsafe_get pw depth in
+    for i = depth - 1 downto 0 do
+      let tmp = next_one /. (Float.of_int (i + 1) *. one) in
+      total <- total +. tmp;
+      next_one <- Array.unsafe_get pw i -. (tmp *. zero *. Float.of_int (depth - i))
+    done)
+  else
+    for i = depth - 1 downto 0 do
+      total <- total +. (Array.unsafe_get pw i /. (zero *. Float.of_int (depth - i)))
+    done;
+  Float_u.of_float (total *. Float.of_int (depth + 1))
+;;
+
+(* Adds leaf [node]'s contributions for [pattern] (bit j: x follows path feature j) into
+   [into], indexed by feature. *)
+let[@zero_alloc] leaf_into ws ~node ~pattern (into : float array) =
+  let d = Array.unsafe_get ws.leaf_d node in
+  let fo = Array.unsafe_get ws.leaf_fo node in
+  extend ws ~depth:0 ~zero:#1. ~one:#1. ~feature:(-1);
+  for j = 0 to d - 1 do
+    extend
+      ws
+      ~depth:(j + 1)
+      ~zero:(Float_u.of_float (Array.unsafe_get ws.leaf_z (fo + j)))
+      ~one:(if (pattern lsr j) land 1 = 1 then #1. else #0.)
+      ~feature:(Array.unsafe_get ws.leaf_feats (fo + j))
+  done;
+  let v = Array.unsafe_get ws.value node in
+  for i = 1 to d do
+    let w = Float_u.to_float (unwound_sum ws ~depth:d ~index:i) in
+    let f = Ints.get ws.path_feature i in
+    Array.unsafe_set
+      into
+      f
+      (Array.unsafe_get into f
+       +. (w *. (Array.unsafe_get ws.path_one i -. Array.unsafe_get ws.path_zero i) *. v)
+      )
+  done
+;;
+
+let workspace ?(max_table_depth = 10) forest =
   match Forest.cover forest with
   | None ->
     Or_error.error_s
       [%message
         "the model has no node covers; re-export it to get path-dependent attributions"]
   | Some cover ->
-    (* A call at depth [d] uses a segment of at most [d + 2] elements starting after its
-       parent's, so the segments of one root-to-leaf path fit in (D+2)(D+3)/2. *)
-    let d = Forest.max_depth forest in
-    let len = ((d + 2) * (d + 3) / 2) + 1 in
-    Ok
-      { forest
-      ; cover
-      ; n_features = Forest.n_features forest
-      ; roots = Forest.Raw.roots forest
-      ; feature = Forest.Raw.feature forest
-      ; left = Forest.Raw.left forest
-      ; right = Forest.Raw.right forest
-      ; value = Forest.Raw.value forest
-      ; path_feature = Array.create ~len (-1)
-      ; path_zero = Array.create ~len 0.
-      ; path_one = Array.create ~len 0.
-      ; path_weight = Array.create ~len 0.
-      }
+    let n = Forest.n_nodes forest in
+    let feature = Forest.Raw.feature forest
+    and left = Forest.Raw.left forest
+    and right = Forest.Raw.right forest
+    and roots = Forest.Raw.roots forest in
+    let leaf_d = Array.create ~len:n 0
+    and leaf_fo = Array.create ~len:n 0
+    and leaf_off = Array.create ~len:n (-1) in
+    let feats = Queue.create ()
+    and zs = Queue.create ()
+    and masks = Queue.create ()
+    and reqs = Queue.create ()
+    and split_nodes = Queue.create ()
+    and leaf_nodes = Queue.create () in
+    let split_start = Array.create ~len:(Array.length roots + 1) 0
+    and leaf_start = Array.create ~len:(Array.length roots + 1) 0 in
+    let table_size = ref 0 in
+    let too_many_splits = ref false in
+    (* [path] holds, for each distinct feature above [node] in order of first appearance
+       (the same for every leaf below a node): the feature, the share of training data
+       that followed the path through its splits, and those splits' decision bits and
+       directions. *)
+    let rec build ~tree_start node (path : (int * float * int * int) list) =
+      let f = feature.(node) in
+      if f < 0
+      then (
+        Queue.enqueue leaf_nodes node;
+        let path = List.rev path in
+        let d = List.length path in
+        leaf_d.(node) <- d;
+        leaf_fo.(node) <- Queue.length feats;
+        List.iter path ~f:(fun (f, z, m, r) ->
+          Queue.enqueue feats f;
+          Queue.enqueue zs z;
+          Queue.enqueue masks m;
+          Queue.enqueue reqs r);
+        if d <= max_table_depth
+        then (
+          leaf_off.(node) <- !table_size;
+          table_size := !table_size + ((1 lsl d) * d)))
+      else (
+        let b = Queue.length split_nodes - tree_start in
+        if b > 61 then too_many_splits := true;
+        let bit = 1 lsl Int.min b 61 in
+        Queue.enqueue split_nodes node;
+        List.iter
+          [ left.(node), bit; right.(node), 0 ]
+          ~f:(fun (c, req) ->
+            let share = cover.(c) /. cover.(node) in
+            let path =
+              if List.exists path ~f:(fun (g, _, _, _) -> g = f)
+              then
+                List.map path ~f:(fun ((g, z, m, r) as e) ->
+                  if g = f then g, z *. share, m lor bit, r lor req else e)
+              else (f, share, bit, req) :: path
+            in
+            build ~tree_start c path))
+    in
+    Array.iteri roots ~f:(fun k r ->
+      split_start.(k) <- Queue.length split_nodes;
+      leaf_start.(k) <- Queue.length leaf_nodes;
+      build ~tree_start:(Queue.length split_nodes) r []);
+    split_start.(Array.length roots) <- Queue.length split_nodes;
+    leaf_start.(Array.length roots) <- Queue.length leaf_nodes;
+    let max_d = Array.fold leaf_d ~init:0 ~f:Int.max in
+    if !too_many_splits
+    then
+      (* Each tree's decisions are one int of bits; 62 splits is 63 leaves. *)
+      Or_error.error_s [%message "a tree has more than 62 splits"]
+    else if max_d > 61
+    then Or_error.error_s [%message "a leaf path has more than 61 distinct features"]
+    else (
+      let len = max_d + 2 in
+      let ws =
+        { forest
+        ; n_features = Forest.n_features forest
+        ; roots
+        ; value = Forest.Raw.value forest
+        ; split_start
+        ; split_nodes = Queue.to_array split_nodes
+        ; leaf_start
+        ; leaf_nodes = Queue.to_array leaf_nodes
+        ; leaf_d
+        ; leaf_fo
+        ; leaf_off
+        ; leaf_feats = Queue.to_array feats
+        ; leaf_z = Queue.to_array zs
+        ; entry_mask = Queue.to_array masks
+        ; entry_req = Queue.to_array reqs
+        ; table = Array.create ~len:!table_size 0.
+        ; path_feature = Ints.create len
+        ; path_zero = Array.create ~len 0.
+        ; path_one = Array.create ~len 0.
+        ; path_weight = Array.create ~len 0.
+        }
+      in
+      let scratch = Array.create ~len:ws.n_features 0. in
+      for node = 0 to n - 1 do
+        let off = leaf_off.(node) in
+        if feature.(node) < 0 && off >= 0
+        then (
+          let d = leaf_d.(node)
+          and fo = leaf_fo.(node) in
+          for pattern = 0 to (1 lsl d) - 1 do
+            leaf_into ws ~node ~pattern scratch;
+            for j = 0 to d - 1 do
+              let f = ws.leaf_feats.(fo + j) in
+              ws.table.(off + (pattern * d) + j) <- scratch.(f);
+              scratch.(f) <- 0.
+            done
+          done)
+      done;
+      Ok ws)
 ;;
 
-(* The three routines below are the standard ones (extend, unwind, unwound sum), over a
-   segment starting at [s] whose last element has index [s + depth]. *)
+let table_entries ws = Array.length ws.table
 
-let[@zero_alloc] extend ws ~s ~depth ~zero ~one ~feature =
-  let pw = ws.path_weight in
-  Array.unsafe_set ws.path_feature (s + depth) feature;
-  Array.unsafe_set ws.path_zero (s + depth) (Float_u.to_float zero);
-  Array.unsafe_set ws.path_one (s + depth) (Float_u.to_float one);
-  Array.unsafe_set pw (s + depth) (if depth = 0 then 1. else 0.);
-  let zero = Float_u.to_float zero
-  and one = Float_u.to_float one in
-  let d1 = Float.of_int (depth + 1) in
-  for i = depth - 1 downto 0 do
-    let w = Array.unsafe_get pw (s + i) in
-    Array.unsafe_set
-      pw
-      (s + i + 1)
-      (Array.unsafe_get pw (s + i + 1) +. (one *. w *. Float.of_int (i + 1) /. d1));
-    Array.unsafe_set pw (s + i) (zero *. w *. Float.of_int (depth - i) /. d1)
-  done
-;;
-
-let[@zero_alloc] unwind ws ~s ~depth ~index =
-  let pw = ws.path_weight in
-  let one = Array.unsafe_get ws.path_one (s + index) in
-  let zero = Array.unsafe_get ws.path_zero (s + index) in
-  let d1 = Float.of_int (depth + 1) in
-  let mutable next_one = Array.unsafe_get pw (s + depth) in
-  for i = depth - 1 downto 0 do
-    if Float.( <> ) one 0.
-    then (
-      let w = Array.unsafe_get pw (s + i) in
-      let nw = next_one *. d1 /. (Float.of_int (i + 1) *. one) in
-      Array.unsafe_set pw (s + i) nw;
-      next_one <- w -. (nw *. zero *. Float.of_int (depth - i) /. d1))
-    else
-      Array.unsafe_set
-        pw
-        (s + i)
-        (Array.unsafe_get pw (s + i) *. d1 /. (zero *. Float.of_int (depth - i)))
-  done;
-  for i = index to depth - 1 do
-    Array.unsafe_set
-      ws.path_feature
-      (s + i)
-      (Array.unsafe_get ws.path_feature (s + i + 1));
-    Array.unsafe_set ws.path_zero (s + i) (Array.unsafe_get ws.path_zero (s + i + 1));
-    Array.unsafe_set ws.path_one (s + i) (Array.unsafe_get ws.path_one (s + i + 1))
-  done
-;;
-
-(* The total permutation weight of the path with element [index] removed, without
-   modifying the path. *)
-let[@zero_alloc] unwound_sum ws ~s ~depth ~index =
-  let pw = ws.path_weight in
-  let one = Array.unsafe_get ws.path_one (s + index) in
-  let zero = Array.unsafe_get ws.path_zero (s + index) in
-  let mutable total = 0. in
-  if Float.( <> ) one 0.
-  then (
-    let mutable next_one = Array.unsafe_get pw (s + depth) in
-    for i = depth - 1 downto 0 do
-      let tmp = next_one /. (Float.of_int (i + 1) *. one) in
-      total <- total +. tmp;
-      next_one <- Array.unsafe_get pw (s + i) -. (tmp *. zero *. Float.of_int (depth - i))
-    done)
-  else
-    for i = depth - 1 downto 0 do
-      total <- total +. (Array.unsafe_get pw (s + i) /. (zero *. Float.of_int (depth - i)))
-    done;
-  Float_u.of_float (total *. Float.of_int (depth + 1))
-;;
-
-(* [parent] is the start of the parent's segment; this call's segment starts right after
-   the parent's [depth] elements (the parent had [depth - 1] plus the dummy). *)
-let[@zero_alloc] rec recurse
-  ws
-  (x : float array)
-  (into : float array)
-  ~node
-  ~parent
-  ~depth
-  ~(zero : float#)
-  ~(one : float#)
-  ~feature
-  =
-  let f = ws.forest in
-  let s = parent + depth + 1 in
-  for i = 0 to depth do
-    Array.unsafe_set
-      ws.path_feature
-      (s + i)
-      (Array.unsafe_get ws.path_feature (parent + i));
-    Array.unsafe_set ws.path_zero (s + i) (Array.unsafe_get ws.path_zero (parent + i));
-    Array.unsafe_set ws.path_one (s + i) (Array.unsafe_get ws.path_one (parent + i));
-    Array.unsafe_set ws.path_weight (s + i) (Array.unsafe_get ws.path_weight (parent + i))
-  done;
-  extend ws ~s ~depth ~zero ~one ~feature;
-  let split = Array.unsafe_get ws.feature node in
-  if split < 0
-  then (
-    let leaf = Array.unsafe_get ws.value node in
-    for i = 1 to depth do
-      let w = Float_u.to_float (unwound_sum ws ~s ~depth ~index:i) in
-      let fi = Array.unsafe_get ws.path_feature (s + i) in
-      Array.unsafe_set
-        into
-        fi
-        (Array.unsafe_get into fi
-         +. (w
-             *. (Array.unsafe_get ws.path_one (s + i)
-                 -. Array.unsafe_get ws.path_zero (s + i))
-             *. leaf))
-    done)
-  else (
-    let hot = Forest.Raw.next f x node in
-    let left = Array.unsafe_get ws.left node in
-    let cold = if hot = left then Array.unsafe_get ws.right node else left in
-    let c = Array.unsafe_get ws.cover node in
-    let hot_zero = Array.unsafe_get ws.cover hot /. c in
-    let cold_zero = Array.unsafe_get ws.cover cold /. c in
-    (* A feature split on again further down: undo its earlier element and redo it here
-       with the product of both fractions. *)
-    let mutable index = 0 in
-    while index <= depth && Array.unsafe_get ws.path_feature (s + index) <> split do
-      index <- index + 1
-    done;
-    let mutable incoming_zero = 1. in
-    let mutable incoming_one = 1. in
-    let mutable depth = depth in
-    if index <= depth
-    then (
-      incoming_zero <- Array.unsafe_get ws.path_zero (s + index);
-      incoming_one <- Array.unsafe_get ws.path_one (s + index);
-      unwind ws ~s ~depth ~index;
-      depth <- depth - 1);
-    recurse
-      ws
-      x
-      into
-      ~node:hot
-      ~parent:s
-      ~depth:(depth + 1)
-      ~zero:(Float_u.of_float (hot_zero *. incoming_zero))
-      ~one:(Float_u.of_float incoming_one)
-      ~feature:split;
-    recurse
-      ws
-      x
-      into
-      ~node:cold
-      ~parent:s
-      ~depth:(depth + 1)
-      ~zero:(Float_u.of_float (cold_zero *. incoming_zero))
-      ~one:#0.
-      ~feature:split)
-;;
-
+(* Per tree, one pass over its splits collects [x]'s decisions as bits of an int (1 =
+   left), in registers; then each leaf reads its pattern off those bits (bit j is set when
+   [x] takes the path's direction at every split on the leaf's j-th feature) and adds its
+   table row. Nothing is stored between nodes, so there is no chain of dependent loads and
+   stores from parent to child, and no branch on [x]'s direction. *)
 let[@zero_alloc] path_dependent_u ws (x : float array) ~(into : float array) =
   let n = ws.n_features in
   if Array.length x <> n || Array.length into <> n
@@ -218,26 +261,45 @@ let[@zero_alloc] path_dependent_u ws (x : float array) ~(into : float array) =
   for i = 0 to n - 1 do
     Array.unsafe_set into i 0.
   done;
-  let roots = ws.roots in
-  for k = 0 to Array.length roots - 1 do
-    (* The root extends a path of length zero with a dummy element (feature -1); its
-       segment starts at 1, and the index-0 "parent" element it copies is overwritten. *)
-    recurse
-      ws
-      x
-      into
-      ~node:(Array.unsafe_get roots k)
-      ~parent:0
-      ~depth:0
-      ~zero:#1.
-      ~one:#1.
-      ~feature:(-1)
+  for t = 0 to Array.length ws.roots - 1 do
+    let s0 = Array.unsafe_get ws.split_start t in
+    let mutable decisions = 0 in
+    for k = s0 to Array.unsafe_get ws.split_start (t + 1) - 1 do
+      let node = Array.unsafe_get ws.split_nodes k in
+      decisions
+      <- decisions lor (Bool.to_int (Forest.Raw.goes_left ws.forest x node) lsl (k - s0))
+    done;
+    for
+      k = Array.unsafe_get ws.leaf_start t to Array.unsafe_get ws.leaf_start (t + 1) - 1
+    do
+      let node = Array.unsafe_get ws.leaf_nodes k in
+      let d = Array.unsafe_get ws.leaf_d node in
+      let fo = Array.unsafe_get ws.leaf_fo node in
+      let mutable p = 0 in
+      for j = 0 to d - 1 do
+        let m = Array.unsafe_get ws.entry_mask (fo + j) in
+        let r = Array.unsafe_get ws.entry_req (fo + j) in
+        p <- p lor (Bool.to_int (decisions lxor r land m = 0) lsl j)
+      done;
+      let off = Array.unsafe_get ws.leaf_off node in
+      if off >= 0
+      then (
+        let base = off + (p * d) in
+        for j = 0 to d - 1 do
+          let g = Array.unsafe_get ws.leaf_feats (fo + j) in
+          Array.unsafe_set
+            into
+            g
+            (Array.unsafe_get into g +. Array.unsafe_get ws.table (base + j))
+        done)
+      else leaf_into ws ~node ~pattern:p into
+    done
   done;
   Forest.margin_u ws.forest x
 ;;
 
 let path_dependent ws x =
-  let into = Array.create ~len:(Forest.n_features ws.forest) 0. in
+  let into = Array.create ~len:ws.n_features 0. in
   let (_ : float#) = path_dependent_u ws x ~into in
   Forest.bias ws.forest, into
 ;;
@@ -253,10 +315,9 @@ module Background = struct
     ; value : float array
     ; width : int (** max depth + 1, the row length of [weight] *)
     ; weight : float array (** [weight.(a * width + b)] = a! b! / (a + b + 1)! *)
-    ; side : int array
-    (** per feature: 0 undecided, 1 from x, 2 from the background row *)
-    ; xs : int array (** features taken from x on the current path *)
-    ; zs : int array (** features taken from the background row *)
+    ; side : Ints.t (** per feature: 0 undecided, 1 from x, 2 from the background row *)
+    ; xs : Ints.t (** features taken from x on the current path *)
+    ; zs : Ints.t (** features taken from the background row *)
     }
 
   let forest t = t.forest
@@ -299,9 +360,9 @@ module Background = struct
                 let a = i / width
                 and b = i mod width in
                 fact a *. fact b /. fact (a + b + 1))
-          ; side = Array.create ~len:n 0
-          ; xs = Array.create ~len:width 0
-          ; zs = Array.create ~len:width 0
+          ; side = Ints.create n
+          ; xs = Ints.create width
+          ; zs = Ints.create width
           })
   ;;
 end
@@ -322,14 +383,14 @@ let[@zero_alloc] rec walk (bg : Background.t) x z (into : float array) ~node ~a 
     then (
       let pos = v *. Array.unsafe_get bg.weight (((a - 1) * bg.width) + b) in
       for i = 0 to a - 1 do
-        let f = Array.unsafe_get bg.xs i in
+        let f = Ints.get bg.xs i in
         Array.unsafe_set into f (Array.unsafe_get into f +. pos)
       done);
     if b > 0
     then (
       let neg = v *. Array.unsafe_get bg.weight ((a * bg.width) + b - 1) in
       for i = 0 to b - 1 do
-        let f = Array.unsafe_get bg.zs i in
+        let f = Ints.get bg.zs i in
         Array.unsafe_set into f (Array.unsafe_get into f -. neg)
       done))
   else (
@@ -338,17 +399,17 @@ let[@zero_alloc] rec walk (bg : Background.t) x z (into : float array) ~node ~a 
     if cx = cz
     then walk bg x z into ~node:cx ~a ~b
     else (
-      match Array.unsafe_get bg.side split with
+      match Ints.get bg.side split with
       | 1 -> walk bg x z into ~node:cx ~a ~b
       | 2 -> walk bg x z into ~node:cz ~a ~b
       | _ ->
-        Array.unsafe_set bg.side split 1;
-        Array.unsafe_set bg.xs a split;
+        Ints.set bg.side split 1;
+        Ints.set bg.xs a split;
         walk bg x z into ~node:cx ~a:(a + 1) ~b;
-        Array.unsafe_set bg.side split 2;
-        Array.unsafe_set bg.zs b split;
+        Ints.set bg.side split 2;
+        Ints.set bg.zs b split;
         walk bg x z into ~node:cz ~a ~b:(b + 1);
-        Array.unsafe_set bg.side split 0))
+        Ints.set bg.side split 0))
 ;;
 
 let[@zero_alloc] interventional_u
